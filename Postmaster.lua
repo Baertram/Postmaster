@@ -5,7 +5,7 @@
 Postmaster = {
     name = "Postmaster",
     title = GetString(SI_PM_NAME),
-    version = "3.9.2",
+    version = "4.0.0",
     author = "silvereyes, Garkin & Zierk",
     
     -- For development use only. Set to true to see a ridiculously verbose 
@@ -74,6 +74,9 @@ PM_BOUNCE_MAIL_PREFIXES = {
     "BOUNCE",
     "RETURN"
 }
+
+local LibLootSummary = LibLootSummary.New and LibLootSummary:New(Postmaster.name) 
+                       or LibLootSummary
 
 -- Initalizing the addon
 local function OnAddonLoaded(eventCode, addOnName)
@@ -325,8 +328,12 @@ function MailRead(retries)
     EVENT_MANAGER:RegisterForUpdate(self.name .. "Read", PM_MAIL_READ_TIMEOUT_MS, GetMailReadCallback(retries) )
     
     -- If there exists another message in the inbox that has attachments, select it. otherwise, clear the selection.
-    local nextMailData = self:TakeAllGetNext()
-    ZO_ScrollList_SelectData(ZO_MailInboxList, nextMailData)
+    local nextMailData, nextMailIndex = self:TakeAllGetNext()
+    if IsInGamepadPreferredMode() then
+        MAIL_MANAGER_GAMEPAD.inbox.mailList:SetSelectedIndex(nextMailIndex)
+    else
+        ZO_ScrollList_SelectData(ZO_MailInboxList, nextMailData)
+    end
     return nextMailData
 end
 
@@ -412,6 +419,15 @@ function Postmaster:GetFirstCompleteCodMail()
     end
 end
 
+function Postmaster:GetInboxScrollList()
+    return IsInGamepadPreferredMode() and 
+end
+
+function Postmaster:GetSelectedData()
+    return IsInGamepadPreferredMode() and MAIL_MANAGER_GAMEPAD.inbox:GetActiveMailData() 
+          or MAIL_INBOX.selectedData 
+end
+
 --[[ Returns a sorted list of mail data for the current inbox, whether keyboard 
      or gamepad. The second output parameter is the name of the mailData field 
      for items in the returned list. ]]
@@ -420,6 +436,14 @@ function Postmaster.GetMailData()
         return MAIL_MANAGER_GAMEPAD.inbox.mailList.dataList, "dataSource"
     else
         return ZO_MailInboxList.data, "data"
+    end
+end
+
+function Postmaster:GetMailDataById(mailId)
+    if IsInGamepadPreferredMode() then 
+        return MAIL_MANAGER_GAMEPAD.inbox.mailDataById[zo_getSafeId64Key(mailId)]
+    else
+        return MAIL_INBOX:GetMailData(mailId)
     end
 end
 
@@ -438,12 +462,13 @@ end
 
 --[[ Returns the current mail messages data array, if one is selected ]]
 function Postmaster.GetOpenMailData()
+    local self = Postmaster
     local mailId = MAIL_INBOX:GetOpenMailId()
     if type(mailId) ~= "number" then 
         Postmaster.Debug("There is no open mail id "..tostring(mailId))
         return 
     end
-    local mailData = MAIL_INBOX:GetMailData(mailId)
+    local mailData = self:GetMailDataById(mailId)
     return mailData
 end
 
@@ -558,6 +583,9 @@ function Postmaster.PrintAttachmentSummary(attachmentData)
     local summary = ""
     LibLootSummary:SetPrefix(self.prefix)
     LibLootSummary:SetSuffix(self.suffix)
+    if LibLootSummary.SetSorted then
+        LibLootSummary:SetSorted(true)
+    end
     
     -- Add items summary
     for attachIndex=1,#attachmentData.items do
@@ -607,7 +635,7 @@ function Postmaster:RequestMailDelete(mailId)
     local attachmentData = self.attachmentData[mailIdString]
     self.attachmentData[mailIdString] = nil
     
-    local mailData = MAIL_INBOX:GetMailData(mailId)
+    local mailData = self:GetMailDataById(mailId)
     if (mailData.attachedMoney and mailData.attachedMoney > 0) or (mailData.numAttachments and mailData.numAttachments > 0) then
         self.Debug("Cannot delete mail id "..mailIdString.." because it is not empty")
         self.mailIdsFailedDeletion[mailIdString] = true
@@ -895,19 +923,20 @@ end
 --[[ True if the currently-selected mail can be taken by Take All operations 
      according to current options panel criteria. ]]
 function Postmaster:TakeAllCanTakeSelectedMail()
-    if MAIL_INBOX.selectedData 
-       and self:TakeAllCanTake(MAIL_INBOX.selectedData) 
-    then 
+    
+    local selectedData = self:GetSelectedData()
+    if selectedData and self:TakeAllCanTake(selectedData) then 
         return true 
     end
 end
 
 --[[ Gets the next highest-priority mail data instance that Take All can take ]]
 function Postmaster:TakeAllGetNext()
-    for i=1,#ZO_MailInboxList.data do
-        local item = ZO_MailInboxList.data[i]
-        if self:TakeAllCanTake(item.data) then
-            return item.data
+    local data, mailDataIndex = self.GetMailData()
+    for entryIndex, entry in pairs(data) do
+        local mailData = entry[mailDataIndex]
+        if self:TakeAllCanTake(mailData) then
+            return mailData, entryIndex
         end
     end
 end
@@ -927,7 +956,7 @@ end
      deletes the mail if it has no attachments. ]]
 function Postmaster:TakeOrDeleteSelected()
     if self:TryTakeAllCodMail() then return end
-    local mailData = MAIL_INBOX.selectedData
+    local mailData = self:GetSelectedData()
     local hasAttachments = (mailData.attachedMoney and mailData.attachedMoney) > 0 
       or (mailData.numAttachments and mailData.numAttachments > 0)
     if hasAttachments then
@@ -1088,6 +1117,19 @@ function Postmaster:KeybindSetupKeyboard()
     MAIL_INBOX.selectionKeybindStripDescriptor = keybindGroup
 end
 
+function Postmaster:KeybindSetupGamepad()
+    
+    local inbox = MAIL_MANAGER_GAMEPAD.inbox
+    
+    local mainGroup = inbox.mainKeybindDescriptor
+    self.originalGamepadDescriptors = {
+        take = self.KeybindGetDescriptor(mainGroup, "UI_SHORTCUT_PRIMARY"),
+        delete = self.KeybindGetDescriptor(mainGroup, "UI_SHORTCUT_SECONDARY"),
+    }
+    
+    
+end
+
 --[[   
  
     Return to sender - OR - Cancel take all, depending on context 
@@ -1188,6 +1230,7 @@ end
 function Postmaster.Keybind_Primary_Visible()
     local self = Postmaster
     if self:IsBusy() then return false end
+    
     if self.originalDescriptors.take.visible() then return true end
     if MailR and MailR.IsMailIdSentMail(MAIL_INBOX.mailId) then return true end
     return self.originalDescriptors.delete.visible()
@@ -1220,7 +1263,7 @@ function Postmaster.Keybind_Reply_Visible()
     local self = Postmaster
     if self:IsBusy() then return false end
     if MAIL_INBOX.mailId == nil then return end
-    local mailData = MAIL_INBOX:GetMailData(MAIL_INBOX.mailId)
+    local mailData = self:GetMailDataById(MAIL_INBOX.mailId)
     if not mailData then return false end
     return not (mailData.fromCS or mailData.fromSystem)
 end
