@@ -339,6 +339,7 @@ function MailRead(retries)
     -- If there exists another message in the inbox that has attachments, select it. otherwise, clear the selection.
     local nextMailData, nextMailIndex = self:TakeAllGetNext()
     if IsInGamepadPreferredMode() then
+        self.Debug("Setting mail list selected index to " .. tostring(nextMailIndex))
         MAIL_MANAGER_GAMEPAD.inbox.mailList:SetSelectedIndex(nextMailIndex)
     else
         ZO_ScrollList_SelectData(ZO_MailInboxList, nextMailData)
@@ -490,7 +491,7 @@ function addon.GetOpenMailData()
     end
     local mailId = MAIL_INBOX:GetOpenMailId()
     if type(mailId) ~= "number" then 
-        addon.Debug("There is no open mail id "..tostring(mailId))
+        addon.Debug("There is no open mail id " .. self.GetMailIdString(mailId))
         return 
     end
     local mailData = self.GetMailDataById(mailId)
@@ -668,11 +669,13 @@ function addon:RequestMailDelete(mailId)
     self.attachmentData[mailIdString] = nil
     
     local mailData = self.GetMailDataById(mailId)
-    if (mailData.attachedMoney and mailData.attachedMoney > 0) or (mailData.numAttachments and mailData.numAttachments > 0) then
-        self.Debug("Cannot delete mail id "..mailIdString.." because it is not empty")
-        self.mailIdsFailedDeletion[mailIdString] = true
-        self.Event_MailRemoved(nil, mailId)
-        return
+    if not IsInGamepadPreferredMode() then
+        if (mailData.attachedMoney and mailData.attachedMoney > 0) or (mailData.numAttachments and mailData.numAttachments > 0) then
+            self.Debug("Cannot delete mail id "..mailIdString.." because it is not empty")
+            self.mailIdsFailedDeletion[mailIdString] = true
+            self.Event_MailRemoved(nil, mailId)
+            return
+        end
     end
     
     
@@ -689,20 +692,20 @@ function addon:RequestMailDelete(mailId)
     
     
     -- Mark mail for deletion
-    self.Debug("Marking mail id "..tostring(mailId).." for deletion")
+    self.Debug("Marking mail id " .. mailIdString .. " for deletion")
     table.insert(self.mailIdsMarkedForDeletion, mailId)
     
     -- If inbox is open...
     if self.IsInboxShowing() then
         -- If all attachments are gone, remove the message
-        self.Debug("Deleting "..tostring(mailId))
+        self.Debug("Deleting " .. mailIdString)
         
         MailDelete(mailId)
         
     -- Inbox is no longer open, so delete events won't be raised
     else
         if not AreId64sEqual(self.mailIdLastOpened, mailId) then
-            self.Debug("Marking mail id "..tostring(mailId).." to be opened when inbox does")
+            self.Debug("Marking mail id " .. mailIdString .. " to be opened when inbox does")
             self.requestMailId = mailId
             MAIL_INBOX.mailId = nil
             if MAIL_MANAGER_GAMEPAD.inbox.mailList and MAIL_MANAGER_GAMEPAD.inbox.mailList.enabled then
@@ -1001,7 +1004,8 @@ function addon:TakeOrDeleteSelected()
       or (mailData.numAttachments and mailData.numAttachments > 0)
     if hasAttachments then
         self.taking = true
-        self.originalDescriptors.take.callback()
+        local keybinds = self:GetOriginalKeybinds()
+        keybinds.take.callback()
     else
         -- If all attachments are gone, remove the message
         self.Debug("Deleting "..tostring(mailData.mailId))
@@ -1045,7 +1049,7 @@ function addon:TryDeleteMarkedMail(mailId)
     if not deleteIndex then return end
     -- Resume the Take operation. will be cleared when the mail removed event handler fires.
     self.taking = true 
-    self.Debug("deleting mail id "..tostring(mailId))
+    self.Debug("deleting mail id " .. self.GetMailIdString(mailId))
     self:RequestMailDelete(mailId)
     self.UpdateKeybindStrip()
     return deleteIndex
@@ -1173,8 +1177,9 @@ UI_SHORTCUT_RIGHT_TRIGGER scroll
 UI_SHORTCUT_LEFT_SHOULDER tab
 UI_SHORTCUT_RIGHT_SHOULDER tab
 ]]--
-function addon:KeybindSetupGamepad()
-    if not self then self = addon end
+function addon.KeybindSetupGamepad()
+  
+    local self = addon
     
     local inbox = MAIL_MANAGER_GAMEPAD.inbox
     
@@ -1186,7 +1191,8 @@ function addon:KeybindSetupGamepad()
         delete = self.KeybindGetDescriptor(mainGroup, "UI_SHORTCUT_SECONDARY"),
         returnToSender = {
             name = returnToSenderOption.text,
-            callback = returnToSenderOption.selectedCallback
+            callback = returnToSenderOption.selectedCallback,
+            visible = function() return IsMailReturnable(inbox:GetActiveMailId()) end
         },
         viewAttachments = self.KeybindGetDescriptor(mainGroup, "UI_SHORTCUT_RIGHT_STICK"),
     }
@@ -1329,7 +1335,7 @@ function addon.Keybind_Primary_Callback()
     if self:IsBusy() then return end
     
     local mailData = self.GetOpenMailData()
-    local keybinds = self:GetOriginalKeybinds
+    local keybinds = self:GetOriginalKeybinds()
     if keybinds.delete.visible()
        or (MailR and MailR.IsMailIdSentMail(mailData.mailId))
     then
@@ -1554,7 +1560,7 @@ end
      self.mailIdsMarkedForDeletion array. ]]
 function addon.Event_MailReadable(eventCode, mailId)
     local self = addon
-    self.Debug("Event_MailReadable("..tostring(mailId)..")")
+    self.Debug("Event_MailReadable(" .. self.GetMailIdString(mailId) .. ")")
     EVENT_MANAGER:UnregisterForUpdate(self.name .. "Read")
         
     -- If taking all, then go ahead and start the next Take loop, since the
@@ -1587,7 +1593,7 @@ function addon.Event_MailRemoved(eventCode, mailId)
         -- Unwire timeout callback
         EVENT_MANAGER:UnregisterForUpdate(self.name .. "Delete")
         PlaySound(SOUNDS.MAIL_ITEM_DELETED)
-        self.Debug("deleted mail id "..tostring(mailId))
+        self.Debug("deleted mail id " .. self.GetMailIdString(mailId))
     end
     
     -- In the middle of auto-return
@@ -1641,8 +1647,9 @@ end
 function addon.Event_MailTakeAttachedItemSuccess(eventCode, mailId)
     local self = addon
     if not self.taking then return end
-    self.Debug("attached items taken "..tostring(mailId))
-    local waitingForMoney = table.remove(self.awaitingAttachments[self.GetMailIdString(mailId)])
+    local mailIdString = self.GetMailIdString(mailId)
+    self.Debug("attached items taken " .. mailIdString)
+    local waitingForMoney = table.remove(self.awaitingAttachments[mailIdString])
     if waitingForMoney then 
         self.Debug("still waiting for money or COD. exiting.")
     else
@@ -1657,8 +1664,9 @@ end
 function addon.Event_MailTakeAttachedMoneySuccess(eventCode, mailId)
     local self = addon
     if not self.taking then return end
-    self.Debug("attached money taken "..tostring(mailId))
-    local waitingForItems = table.remove(self.awaitingAttachments[self.GetMailIdString(mailId)])
+    local mailIdString = self.GetMailIdString(mailId)
+    self.Debug("attached money taken " .. mailIdString)
+    local waitingForItems = table.remove(self.awaitingAttachments[mailIdString])
     if waitingForItems then 
         self.Debug("still waiting for items. exiting.")
     else
@@ -1785,8 +1793,9 @@ function addon.Prehook_MailInboxShared_TakeAll(mailId)
             if not self.settings.takeAllCodTake then return end
         elseif not MAIL_INBOX.pendingAcceptCOD then return end
     end 
-    self.Debug("ZO_MailInboxShared_TakeAll("..tostring(mailId)..")")
-    self.awaitingAttachments[self.GetMailIdString(mailId)] = {}
+    local mailIdString = self.GetMailIdString(mailId)
+    self.Debug("ZO_MailInboxShared_TakeAll(" .. mailIdString .. ")")
+    self.awaitingAttachments[mailIdString] = {}
     local attachmentData = { items = {}, money = attachedMoney, cod = codAmount }
     local uniqueAttachmentConflictCount = 0
     for attachIndex=1,numAttachments do
@@ -1798,20 +1807,19 @@ function addon.Prehook_MailInboxShared_TakeAll(mailId)
             table.insert(attachmentData.items, attachmentItem)
         end
     end
-    local mailIdString = self.GetMailIdString(mailId)
     
     if numAttachments > 0 then
     
         -- If all attachments were unique and already in the backpack
         if uniqueAttachmentConflictCount == numAttachments then
-            self.Debug("Not taking attachments for "..mailIdString
+            self.Debug("Not taking attachments for " .. mailIdString
                        .." because it contains only unique items that are already in the backpack")
             self.mailIdsFailedDeletion[mailIdString] = true
             self.Event_MailRemoved(nil, mailId)
             return true
         end
         if attachedMoney > 0 or codAmount > 0 then
-            table.insert(self.awaitingAttachments[self.GetMailIdString(mailId)], true)
+            table.insert(self.awaitingAttachments[mailIdString], true)
             -- Wire up timeout callback
             TakeTimeout(mailId)
         end
@@ -1829,7 +1837,7 @@ end
      so that we can request the mail again immediately when the inbox is opened. ]]
 function addon.Prehook_RequestReadMail(mailId)
     local self = addon
-    self.Debug("RequestReadMail("..tostring(mailId)..")")
+    self.Debug("RequestReadMail(" .. self.GetMailIdString(mailId) .. ")")
     self.mailIdLastOpened = mailId
     local inboxState = self:GetInboxState()
     -- Avoid a double read request on inbox open
