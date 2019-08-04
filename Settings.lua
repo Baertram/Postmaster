@@ -3,12 +3,12 @@
                 SETTINGS
     ===================================
   ]]
-local LibSavedVars = LibSavedVars or LibStub("LibSavedVars")
+local addon = Postmaster
 local renamedSettings
 local renamedAndInvertedSettings
 local refreshPrefix
 
-function Postmaster:SettingsSetup()
+function addon:SettingsSetup()
 
     self.defaults = {
         bounce = false,
@@ -66,20 +66,17 @@ function Postmaster:SettingsSetup()
     self.chatColor = ZO_ColorDef:New(unpack(self.settings.chatColor))
     refreshPrefix()
     
-    local LAM2 = LibAddonMenu2 or LibStub("LibAddonMenu-2.0")
-    if not LAM2 then return end
-    
     local panelData = {
         type = "panel",
-        name = Postmaster.title,
-        displayName = ZO_HIGHLIGHT_TEXT:Colorize(Postmaster.title),
-        author = Postmaster.author,
-        version = Postmaster.version,
+        name = addon.title,
+        displayName = ZO_HIGHLIGHT_TEXT:Colorize(addon.title),
+        author = addon.author,
+        version = addon.version,
         website = "http://www.esoui.com/downloads/info850-PostmasterMail.html",
         registerForRefresh = true,
         registerForDefaults = true,
     }
-    self.settingsPanel = LAM2:RegisterAddonPanel(Postmaster.name .. "Options", panelData)
+    self.settingsPanel = LibAddonMenu2:RegisterAddonPanel(addon.name .. "Options", panelData)
     
     local optionsTable = {
         
@@ -688,7 +685,7 @@ function Postmaster:SettingsSetup()
         }
     }
         
-    LAM2:RegisterOptionControls(Postmaster.name .. "Options", optionsTable)
+    LibAddonMenu2:RegisterOptionControls(addon.name .. "Options", optionsTable)
     
     SLASH_COMMANDS["/postmaster"] = self.OpenSettingsPanel
     SLASH_COMMANDS["/pm"] = self.OpenSettingsPanel
@@ -701,7 +698,7 @@ end
 ----------------------------------------------------------------------------
 
 function refreshPrefix()
-    local self = Postmaster
+    local self = addon
     local stringId
     local startColor = self.settings.chatUseSystemColor and "" or "|c" .. self.chatColor:ToHex()
     if self.settings.coloredPrefix then

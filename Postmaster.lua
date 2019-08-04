@@ -49,8 +49,11 @@ Postmaster = {
     codMails = {}
 }
 
+local addon = Postmaster
+addon.logger = LibDebugLogger and LibDebugLogger(addon.name)
+
 -- Format for chat print and debug messages, with addon title prefix
-PM_CHAT_PREFIX = zo_strformat("<<1>>", Postmaster.title) .. "|cFFFFFF: "
+PM_CHAT_PREFIX = zo_strformat("<<1>>", addon.title) .. "|cFFFFFF: "
 PM_CHAT_FORMAT = PM_CHAT_PREFIX .. " <<1>>|r"
 
 -- Max milliseconds to wait for a mail removal event from the server after calling DeleteMail
@@ -75,13 +78,19 @@ PM_BOUNCE_MAIL_PREFIXES = {
     "RETURN"
 }
 
-local LibLootSummary = LibLootSummary.New and LibLootSummary:New(Postmaster.name) 
+local LibLootSummary = LibLootSummary.New and LibLootSummary:New(addon.name) 
                        or LibLootSummary
+local hiddenStates = {
+    [SCENE_HIDDEN]          = true,
+    [SCENE_HIDING]          = true,
+    [SCENE_FRAGMENT_HIDDEN] = true,
+    [SCENE_FRAGMENT_HIDING] = true,
+}
 
 -- Initalizing the addon
 local function OnAddonLoaded(eventCode, addOnName)
 
-    local self = Postmaster
+    local self = addon
     
     if ( addOnName ~= self.name ) then return end
     EVENT_MANAGER:UnregisterForEvent(self.name, eventCode)
@@ -104,7 +113,7 @@ local function OnAddonLoaded(eventCode, addOnName)
     -- Replace keybinds in the mouse/keyboard inbox UI
     self:KeybindSetupKeyboard()
     
-    -- TODO: add gamepad inbox UI keybind support
+    -- Note: gamepad keybind setup is done in a prehook to the gamepad inbox InitializeEvents method.
 end
 
 local systemEmailSubjects = {
@@ -149,7 +158,7 @@ local systemEmailSenders = {
 
 local function CanTakeAllDelete(mailData, attachmentData)
 
-    local self = Postmaster
+    local self = addon
     
     if not mailData or not mailData.mailId or type(mailData.mailId) ~= "number" then 
         self.Debug("mailData parameter not working right")
@@ -279,7 +288,7 @@ end
 
 local function MailDeleteFailed(timeoutData)
     ZO_Alert(UI_ALERT_CATEGORY_ALERT, nil, SI_PM_DELETE_FAILED)
-    Postmaster:Reset()
+    addon:Reset()
 end
 
 local MailDelete
@@ -296,7 +305,7 @@ end
 
 function MailDelete(mailId, retries)
     -- Wire up timeout callback
-    local self = Postmaster
+    local self = addon
     if not retries then
         retries = PM_DELETE_MAIL_MAX_RETRIES
     end
@@ -308,7 +317,7 @@ end
 local MailRead
 local function GetMailReadCallback(retries)
     return function()
-        local self = Postmaster
+        local self = addon
         retries = retries - 1
         if retries < 0 then
             ZO_Alert(UI_ALERT_CATEGORY_ALERT, nil, SI_PM_READ_FAILED)
@@ -321,7 +330,7 @@ end
 
 function MailRead(retries)
 
-    local self = Postmaster
+    local self = addon
     if not retries then
         retries = PM_MAIL_READ_MAX_RETRIES
     end
@@ -339,7 +348,7 @@ end
 
 local function TakeFailed()
     ZO_Alert(UI_ALERT_CATEGORY_ALERT, nil, SI_PM_TAKE_ATTACHMENTS_FAILED)
-    Postmaster:Reset()
+    addon:Reset()
 end
 
 local TakeTimeout
@@ -355,7 +364,7 @@ local function GetTakeCallback(mailId, retries)
     end
 end
 function TakeTimeout(mailId, retries)
-    local self = Postmaster
+    local self = addon
     if not retries then
         retries = PM_TAKE_ATTACHMENTS_MAX_RETRIES
     end
@@ -363,17 +372,26 @@ function TakeTimeout(mailId, retries)
 end
 
 -- Register events
-EVENT_MANAGER:RegisterForEvent(Postmaster.name, EVENT_ADD_ON_LOADED, OnAddonLoaded)
+EVENT_MANAGER:RegisterForEvent(addon.name, EVENT_ADD_ON_LOADED, OnAddonLoaded)
 
+function addon:ClearSelectedMail()
+    MAIL_INBOX.mailId = nil
+    if MAIL_MANAGER_GAMEPAD.inbox.mailList and MAIL_MANAGER_GAMEPAD.inbox.mailList.enabled then
+        local oldTargetSelectedIndex = MAIL_MANAGER_GAMEPAD.inbox.mailList.targetSelectedIndex
+        if oldTargetSelectedIndex then
+            MAIL_MANAGER_GAMEPAD.inbox.mailList:SetSelectedIndexWithoutAnimation(nil)
+        end
+    end
+end
 
 --[[ Outputs formatted message to chat window if debugging is turned on ]]
-function Postmaster.Debug(input, scopeDebug)
-    if not Postmaster.debugMode and not scopeDebug then return end
-    Postmaster.Print(input)
+function addon.Debug(input, scopeDebug)
+    if not addon.logger then return end
+    addon.logger:Debug(input)
 end
 
 --[[ Registers a potential backpack slot as unique ]]--
-function Postmaster:DiscoverUniqueBackpackItem(slotIndex)
+function addon:DiscoverUniqueBackpackItem(slotIndex)
     local itemLink = GetItemLink(BAG_BACKPACK, slotIndex)
     if not itemLink or itemLink == "" then
         self.backpackUniqueItems[slotIndex] = nil
@@ -385,7 +403,7 @@ function Postmaster:DiscoverUniqueBackpackItem(slotIndex)
 end
 
 --[[ Scans the backpack and generates a list of unique items ]]--
-function Postmaster:DiscoverUniqueItemsInBackpack()
+function addon:DiscoverUniqueItemsInBackpack()
     self.backpackUniqueItems = {}
     local slotIndex, _
     for slotIndex, _ in pairs(PLAYER_INVENTORY.inventories[INVENTORY_BACKPACK].slots) do
@@ -395,13 +413,13 @@ function Postmaster:DiscoverUniqueItemsInBackpack()
 end
 
 --[[ Places the cursor in the send mail body field. Used by the Reply action. ]]
-function Postmaster.FocusSendMailBody()
+function addon.FocusSendMailBody()
     ZO_MailSendBodyField:TakeFocus()
 end
 
 --[[ Searches self.codMails for the first mail id and C.O.D. mail data taht
      match the given expected amount. ]]
-function Postmaster:GetCodMailByGoldChangeAmount(goldChanged)
+function addon:GetCodMailByGoldChangeAmount(goldChanged)
     for mailIdString,codMail in pairs(self.codMails) do
         if codMail.amount == goldChanged then
             return mailIdString,codMail
@@ -411,7 +429,7 @@ end
 
 --[[ Searches self.codMails for the first mail id and C.O.D. mail data that 
      is marked as "complete". ]]
-function Postmaster:GetFirstCompleteCodMail()
+function addon:GetFirstCompleteCodMail()
     for mailIdString,codMail in pairs(self.codMails) do
         if codMail.complete then
             return mailIdString,codMail
@@ -419,11 +437,15 @@ function Postmaster:GetFirstCompleteCodMail()
     end
 end
 
-function Postmaster:GetInboxScrollList()
-    return IsInGamepadPreferredMode() and 
+function addon:GetInboxState()
+    if IsInGamepadPreferredMode() then
+        return GAMEPAD_MAIL_INBOX_FRAGMENT.state
+    else
+        return MAIL_INBOX_SCENE.state
+    end
 end
 
-function Postmaster:GetSelectedData()
+function addon:GetSelectedData()
     return IsInGamepadPreferredMode() and MAIL_MANAGER_GAMEPAD.inbox:GetActiveMailData() 
           or MAIL_INBOX.selectedData 
 end
@@ -431,7 +453,7 @@ end
 --[[ Returns a sorted list of mail data for the current inbox, whether keyboard 
      or gamepad. The second output parameter is the name of the mailData field 
      for items in the returned list. ]]
-function Postmaster.GetMailData()
+function addon.GetMailData()
     if IsInGamepadPreferredMode() then 
         return MAIL_MANAGER_GAMEPAD.inbox.mailList.dataList, "dataSource"
     else
@@ -439,7 +461,7 @@ function Postmaster.GetMailData()
     end
 end
 
-function Postmaster:GetMailDataById(mailId)
+function addon.GetMailDataById(mailId)
     if IsInGamepadPreferredMode() then 
         return MAIL_MANAGER_GAMEPAD.inbox.mailDataById[zo_getSafeId64Key(mailId)]
     else
@@ -449,7 +471,7 @@ end
 
 --[[ Returns a safe string representation of the given mail ID. Useful as an 
      associative array key for lookups. ]]
-function Postmaster.GetMailIdString(mailId)
+function addon.GetMailIdString(mailId)
     local mailIdType = type(mailId)
     if mailIdType == "string" then 
         return mailId 
@@ -461,24 +483,36 @@ function Postmaster.GetMailIdString(mailId)
 end
 
 --[[ Returns the current mail messages data array, if one is selected ]]
-function Postmaster.GetOpenMailData()
-    local self = Postmaster
+function addon.GetOpenMailData()
+    local self = addon
+    if IsInGamepadPreferredMode() then
+        return MAIL_MANAGER_GAMEPAD.inbox:GetActiveMailData()
+    end
     local mailId = MAIL_INBOX:GetOpenMailId()
     if type(mailId) ~= "number" then 
-        Postmaster.Debug("There is no open mail id "..tostring(mailId))
+        addon.Debug("There is no open mail id "..tostring(mailId))
         return 
     end
-    local mailData = self:GetMailDataById(mailId)
+    local mailData = self.GetMailDataById(mailId)
     return mailData
 end
 
 --[[ True if Postmaster is doing any operations on the inbox. ]]
-function Postmaster:IsBusy()
+function addon:IsBusy()
     return self.taking or self.takingAll or self.deleting or self.returning
 end
 
+function addon:IsInboxShowing()
+    if IsInGamepadPreferredMode() then
+        return SCENE_MANAGER:IsShowing("mailManagerGamepad") 
+               and MAIL_MANAGER_GAMEPAD.activeFragment == GAMEPAD_MAIL_INBOX_FRAGMENT
+    else
+        return SCENE_MANAGER:IsShowing("mailInbox") 
+    end
+end
+
 --[[ Returns true if the given item link is for a unique item that is already in the player backpack. ]]--
-function Postmaster:IsItemUniqueInBackpack(itemLink)
+function addon:IsItemUniqueInBackpack(itemLink)
     local isUnique = IsItemLinkUnique(itemLink)
     if isUnique then
         local itemId = GetItemIdFromLink(itemLink)
@@ -493,7 +527,7 @@ end
 --[[ True if the inbox was closed when a RequestMailDelete() call came in for 
      the given mail ID, and therefore needs to be deleted when the inbox opens
      once more. ]]
-function Postmaster:IsMailMarkedForDeletion(mailId)
+function addon:IsMailMarkedForDeletion(mailId)
     if not mailId then return end
     for deleteIndex=1,#self.mailIdsMarkedForDeletion do
         if AreId64sEqual(self.mailIdsMarkedForDeletion[deleteIndex],mailId) then
@@ -505,7 +539,7 @@ end
 --[[ Checks the given field of a mail message for a given list of
      substrings and returns true if a match is found.
      Note, returns true for "body" requests when the read info isn't yet ready. ]]
-function Postmaster:MailFieldMatch(mailData, field, substrings)
+function addon:MailFieldMatch(mailData, field, substrings)
     
     -- We need to read mail contents
     if field == "body" then
@@ -518,30 +552,28 @@ function Postmaster:MailFieldMatch(mailData, field, substrings)
         
         -- Match on body text
         local body = zo_strlower(ReadMail(mailData.mailId))
-        if Postmaster.StringMatchFirst(body, substrings) then
+        if addon.StringMatchFirst(body, substrings) then
             return true
         end
     
     -- All other fields are available without a read request first
     else
         local value = zo_strlower(mailData[field])
-        if Postmaster.StringMatchFirst(value, substrings) then
+        if addon.StringMatchFirst(value, substrings) then
             return true
         end
     end
 end
 
 --[[ Opens the addon settings panel ]]
-function Postmaster.OpenSettingsPanel()
-    local LAM2 = LibStub("LibAddonMenu-2.0")
-    if not LAM2 then return end
-    LAM2:OpenToPanel(Postmaster.settingsPanel)
+function addon.OpenSettingsPanel()
+    LibAddonMenu2:OpenToPanel(addon.settingsPanel)
 end
 
 --[[ Similar to ZO_PreHook(), except runs the hook function after the existing
      function.  If the hook function returns a value, that value is returned
      instead of the existing function's return value.]]
-function Postmaster.PostHook(objectTable, existingFunctionName, hookFunction)
+function addon.PostHook(objectTable, existingFunctionName, hookFunction)
     if(type(objectTable) == "string") then
         hookFunction = existingFunctionName
         existingFunctionName = objectTable
@@ -565,9 +597,9 @@ function Postmaster.PostHook(objectTable, existingFunctionName, hookFunction)
 end
 
 --[[ Outputs formatted message to chat window ]]
-function Postmaster.Print(input)
-    local self = Postmaster
-    local lines = Postmaster.SplitLines(input, PM_MAX_CHAT_LENGTH, {"%s","\n","|h|h"})
+function addon.Print(input)
+    local self = addon
+    local lines = addon.SplitLines(input, PM_MAX_CHAT_LENGTH, {"%s","\n","|h|h"})
     for i=1,#lines do
         local output = self.prefix .. lines[i] .. self.suffix
         d(output)
@@ -576,8 +608,8 @@ end
 
 --[[ Outputs a verbose summary of all attachments and gold transferred by the 
      current Take or Take All command. ]]
-function Postmaster.PrintAttachmentSummary(attachmentData)
-    local self = Postmaster
+function addon.PrintAttachmentSummary(attachmentData)
+    local self = addon
     if not self.settings.verbose or not attachmentData then return end
     
     local summary = ""
@@ -609,7 +641,7 @@ end
 
 --[[ Called to delete the current mail after all attachments are taken and all 
      C.O.D. money has been removed from the player's inventory.  ]]
-function Postmaster:RequestMailDelete(mailId)
+function addon:RequestMailDelete(mailId)
     local mailIdString = self.GetMailIdString(mailId)
     
     -- If the we haven't received confirmation that the server received the
@@ -635,7 +667,7 @@ function Postmaster:RequestMailDelete(mailId)
     local attachmentData = self.attachmentData[mailIdString]
     self.attachmentData[mailIdString] = nil
     
-    local mailData = self:GetMailDataById(mailId)
+    local mailData = self.GetMailDataById(mailId)
     if (mailData.attachedMoney and mailData.attachedMoney > 0) or (mailData.numAttachments and mailData.numAttachments > 0) then
         self.Debug("Cannot delete mail id "..mailIdString.." because it is not empty")
         self.mailIdsFailedDeletion[mailIdString] = true
@@ -661,7 +693,7 @@ function Postmaster:RequestMailDelete(mailId)
     table.insert(self.mailIdsMarkedForDeletion, mailId)
     
     -- If inbox is open...
-    if SCENE_MANAGER:IsShowing("mailInbox") then
+    if self.IsInboxShowing() then
         -- If all attachments are gone, remove the message
         self.Debug("Deleting "..tostring(mailId))
         
@@ -669,27 +701,35 @@ function Postmaster:RequestMailDelete(mailId)
         
     -- Inbox is no longer open, so delete events won't be raised
     else
-        if not AreId64sEqual(self.mailIdLastOpened,mailId) then
+        if not AreId64sEqual(self.mailIdLastOpened, mailId) then
             self.Debug("Marking mail id "..tostring(mailId).." to be opened when inbox does")
+            self.requestMailId = mailId
             MAIL_INBOX.mailId = nil
-            MAIL_INBOX.requestMailId = mailId
+            if MAIL_MANAGER_GAMEPAD.inbox.mailList and MAIL_MANAGER_GAMEPAD.inbox.mailList.enabled then
+                local oldTargetSelectedIndex = MAIL_MANAGER_GAMEPAD.inbox.mailList.targetSelectedIndex
+                if oldTargetSelectedIndex then
+                    MAIL_MANAGER_GAMEPAD.inbox.mailList:SetSelectedIndexWithoutAnimation(nil)
+                end
+            end
         end
     end
 end
 
 --[[ Sets state variables back to defaults and ensures a consistent inbox state ]]
-function Postmaster:Reset()
+function addon:Reset()
     self.Debug("Reset")
     self.taking = false
     self.takingAll = false
     self.mailIdsFailedDeletion = {}
     ZO_MailInboxList.autoSelect = true
+    -- TODO: set gamepad to autoselect list?
     -- Unwire timeout callbacks
     EVENT_MANAGER:UnregisterForUpdate(self.name .. "Delete")
     EVENT_MANAGER:UnregisterForUpdate(self.name .. "Read")
     EVENT_MANAGER:UnregisterForUpdate(self.name .. "Take")
-    KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_INBOX.selectionKeybindStripDescriptor)
-    if MAIL_INBOX.mailId then
+    self.UpdateKeybindStrip()
+    
+    if not IsInGamepadPreferredMode() and MAIL_INBOX.mailId then
         local currentMailData = ZO_MailInboxList.selectedData
         if not currentMailData then
             self.Debug("Current mail data is nil. Setting MAIL_INBOX.mailId=nil")
@@ -707,7 +747,7 @@ end
      optionally using an array of word boundary strings for pretty wrapping.
      If a line has no word boundaries, or if no boundaries were specified, then
      each line will just be split at the maximum string length. ]]
-function Postmaster.SplitLines(text, maxStringLength, wordBoundaries)
+function addon.SplitLines(text, maxStringLength, wordBoundaries)
     wordBoundaries = wordBoundaries or {}
     local lines = {}
     local index = 1
@@ -736,7 +776,7 @@ end
 
 --[[ Checks the given string for a given list of
      substrings and returns the start and end indexes if a match is found. ]]
-function Postmaster.StringMatchFirst(s, substrings)
+function addon.StringMatchFirst(s, substrings)
     assert(type(s) == "string", "s parameter must be a string")
     if s == "" then return end
     for i=1,#substrings do
@@ -752,7 +792,7 @@ end
 
 --[[ Checks the given string for a given list of
      prefixes and returns the start and end indexes if a match is found. ]]
-function Postmaster.StringMatchFirstPrefix(s, prefixes)
+function addon.StringMatchFirstPrefix(s, prefixes)
     assert(type(s) == "string", "s parameter must be a string")
     if s == "" then return end
     local sLen = s:len()
@@ -788,7 +828,7 @@ end
 --[[ True if the given mail can be taken according to the given settings ]]
 local function CanTakeShared(mailData, settings)
 
-    local self = Postmaster
+    local self = addon
     
     if not mailData or not mailData.mailId or type(mailData.mailId) ~= "number" then 
         return false 
@@ -882,7 +922,7 @@ end
 
 --[[ True if the given mail can be taken by Take operations according
      to current options panel criteria. ]]
-function Postmaster:QuickTakeCanTake(mailData)
+function addon:QuickTakeCanTake(mailData)
     return CanTakeShared(mailData, {
         ["codTake"]           = self.settings.quickTakeCodTake,
         ["codGoldLimit"]      = self.settings.quickTakeCodGoldLimit,
@@ -902,7 +942,7 @@ end
 
 --[[ True if the given mail can be taken by Take All operations according
      to current options panel criteria. ]]
-function Postmaster:TakeAllCanTake(mailData)
+function addon:TakeAllCanTake(mailData)
     return CanTakeShared(mailData, {
         ["codTake"]           = self.settings.takeAllCodTake,
         ["codGoldLimit"]      = self.settings.takeAllCodGoldLimit,
@@ -922,7 +962,7 @@ end
 
 --[[ True if the currently-selected mail can be taken by Take All operations 
      according to current options panel criteria. ]]
-function Postmaster:TakeAllCanTakeSelectedMail()
+function addon:TakeAllCanTakeSelectedMail()
     
     local selectedData = self:GetSelectedData()
     if selectedData and self:TakeAllCanTake(selectedData) then 
@@ -931,7 +971,7 @@ function Postmaster:TakeAllCanTakeSelectedMail()
 end
 
 --[[ Gets the next highest-priority mail data instance that Take All can take ]]
-function Postmaster:TakeAllGetNext()
+function addon:TakeAllGetNext()
     local data, mailDataIndex = self.GetMailData()
     for entryIndex, entry in pairs(data) do
         local mailData = entry[mailDataIndex]
@@ -942,7 +982,7 @@ function Postmaster:TakeAllGetNext()
 end
 
 --[[ Selects the next highest-priority mail data instance that Take All can take ]]
-function Postmaster:TakeAllSelectNext()
+function addon:TakeAllSelectNext()
     -- Don't need to get anything. The current selection already has attachments.
     if self:TakeAllCanTakeSelectedMail() then return true end
     
@@ -954,7 +994,7 @@ end
 
 --[[ Takes attachments from the selected (readable) mail if they exist, or 
      deletes the mail if it has no attachments. ]]
-function Postmaster:TakeOrDeleteSelected()
+function addon:TakeOrDeleteSelected()
     if self:TryTakeAllCodMail() then return end
     local mailData = self:GetSelectedData()
     local hasAttachments = (mailData.attachedMoney and mailData.attachedMoney) > 0 
@@ -973,7 +1013,7 @@ end
 
 --[[ Scans the inbox for any player messages starting with RTS, BOUNCE or RETURN
      in the subject, and automatically returns them to sender, if so configured ]]
-function Postmaster:TryAutoReturnMail()
+function addon:TryAutoReturnMail()
     if not self.settings.bounce or not self.inboxUpdated or self:IsBusy() then
         return
     end
@@ -986,7 +1026,7 @@ function Postmaster:TryAutoReturnMail()
            and not mailData.fromSystem and mailData.codAmount == 0 
            and (mailData.numAttachments > 0 or mailData.attachedMoney > 0)
            and not mailData.returned
-           and Postmaster.StringMatchFirstPrefix(zo_strupper(mailData.subject), PM_BOUNCE_MAIL_PREFIXES) 
+           and addon.StringMatchFirstPrefix(zo_strupper(mailData.subject), PM_BOUNCE_MAIL_PREFIXES) 
         then
             ReturnMail(mailData.mailId)
             if self.settings.verbose then
@@ -1000,22 +1040,22 @@ end
 
 --[[ Called when the inbox opens to automatically delete any mail that finished
      a Take or Take All operation after the inbox was closed. ]]
-function Postmaster:TryDeleteMarkedMail(mailId)
+function addon:TryDeleteMarkedMail(mailId)
     local deleteIndex = self:IsMailMarkedForDeletion(mailId)
     if not deleteIndex then return end
     -- Resume the Take operation. will be cleared when the mail removed event handler fires.
     self.taking = true 
     self.Debug("deleting mail id "..tostring(mailId))
     self:RequestMailDelete(mailId)
-    KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_INBOX.selectionKeybindStripDescriptor)
+    self.UpdateKeybindStrip()
     return deleteIndex
 end
 
 --[[ Bypasses the original "Take attachments" logic for C.O.D. mail during a
      Take All operation. ]]
-function Postmaster:TryTakeAllCodMail()
+function addon:TryTakeAllCodMail()
     if not self.settings.takeAllCodTake then return end
-    local mailData = MAIL_INBOX.selectedData
+    local mailData = self:GetSelectedData()
     if mailData.codAmount and mailData.codAmount > 0 then
         self.taking = true
         MAIL_INBOX.pendingAcceptCOD = true
@@ -1036,7 +1076,7 @@ end
 
 --[[ Given a keybind group descriptor and a keybind name, returns the button
      descriptor assigned to that keybind. ]]
-function Postmaster.KeybindGetDescriptor(keybindGroup, keybind)
+function addon.KeybindGetDescriptor(keybindGroup, keybind)
     for i,descriptor in ipairs(keybindGroup) do
         if descriptor.keybind == keybind then
             return descriptor
@@ -1046,7 +1086,7 @@ end
 
 --[[ Saves the original keyboard UI inbox keybinds and replaces them with our
      custom ones. ]]
-function Postmaster:KeybindSetupKeyboard()
+function addon:KeybindSetupKeyboard()
 
     local originalGroup = MAIL_INBOX.selectionKeybindStripDescriptor
     self.originalDescriptors = {
@@ -1060,7 +1100,7 @@ function Postmaster:KeybindSetupKeyboard()
          Note the use of anonymous functions is necessary, since keybind 
          button callbacks do not pass "self", and the only argument they 
          pass is a boolean specifying whether it was a keyup or keydown.]]
-    local controller = self
+    
     local keybindGroup = {
         inboxController = self,
         alignment = originalGroup.alignment,
@@ -1077,10 +1117,10 @@ function Postmaster:KeybindSetupKeyboard()
             visible = self.Keybind_TakeAll_Visible
         },
         {
-            name = self.Keybind_Negative_GetName,
+            name = self.Keybind_X_GetName,
             keybind = "UI_SHORTCUT_NEGATIVE",
-            callback = self.Keybind_Negative_Callback,
-            visible = self.Keybind_Negative_Visible,
+            callback = self.Keybind_X_Callback,
+            visible = self.Keybind_X_Visible,
             originalDescriptor = self.originalDescriptors.returnToSender
         }
     }
@@ -1117,17 +1157,98 @@ function Postmaster:KeybindSetupKeyboard()
     MAIL_INBOX.selectionKeybindStripDescriptor = keybindGroup
 end
 
-function Postmaster:KeybindSetupGamepad()
+--[[
+UI_SHORTCUT_NEGATIVE = back = B red
+UI_SHORTCUT_PRIMARY = take attachments A green - take and delete 
+UI_SHORTCUT_SECONDARY = delete X blue - return to sender / cancel
+UI_SHORTCUT_TERTIARY = options Y yellow - reply
+UI_SHORTCUT_QUATERNARY = hold X - take all
+UI_SHORTCUT_RIGHT_STICK View Attachments
+UI_SHORTCUT_LEFT_STICK free - take all
+UI_SHORTCUT_INPUT_LEFT free
+UI_SHORTCUT_INPUT_RIGHT free report
+UI_SHORTCUT_EXIT left menu button
+UI_SHORTCUT_LEFT_TRIGGER scroll
+UI_SHORTCUT_RIGHT_TRIGGER scroll
+UI_SHORTCUT_LEFT_SHOULDER tab
+UI_SHORTCUT_RIGHT_SHOULDER tab
+]]--
+function addon:KeybindSetupGamepad()
+    if not self then self = addon end
     
     local inbox = MAIL_MANAGER_GAMEPAD.inbox
     
     local mainGroup = inbox.mainKeybindDescriptor
+    local returnToSenderOption = inbox.optionsList.dataList[1]
     self.originalGamepadDescriptors = {
+        back = self.KeybindGetDescriptor(mainGroup, "UI_SHORTCUT_NEGATIVE"),
         take = self.KeybindGetDescriptor(mainGroup, "UI_SHORTCUT_PRIMARY"),
         delete = self.KeybindGetDescriptor(mainGroup, "UI_SHORTCUT_SECONDARY"),
+        returnToSender = {
+            name = returnToSenderOption.text,
+            callback = returnToSenderOption.selectedCallback
+        },
+        viewAttachments = self.KeybindGetDescriptor(mainGroup, "UI_SHORTCUT_RIGHT_STICK"),
     }
     
-    
+    inbox.mainKeybindDescriptor =
+    {
+        alignment = mainGroup.alignment,
+
+        -- Back
+        self.originalGamepadDescriptors.back,
+
+        -- Take / Delete
+        {
+            name = self.Keybind_Primary_GetName,
+            keybind = "UI_SHORTCUT_PRIMARY",
+            callback = self.Keybind_Primary_Callback,
+            visible = self.Keybind_Primary_Visible
+        },
+        
+        -- Take All
+        {
+            name = GetString(SI_LOOT_TAKE_ALL),
+            keybind = "UI_SHORTCUT_QUATERNARY",
+            callback = self.Keybind_TakeAll_Callback,
+            visible = self.Keybind_TakeAll_Visible
+        },
+
+        -- Return to Sender
+        {
+            name = self.originalGamepadDescriptors.delete.text,
+            keybind = "UI_SHORTCUT_SECONDARY",
+            callback = self.originalGamepadDescriptors.delete.callback,
+            visible = self.Keybind_X_Visible,
+        },
+        
+        -- Reply
+        {
+            name = GetString(SI_MAIL_READ_REPLY),
+            keybind = "UI_SHORTCUT_TERTIARY",
+            callback = self.Keybind_Reply_Callback,
+            visible = self.Keybind_Reply_Visible
+        },
+
+        -- View Attachments
+        self.originalGamepadDescriptors.viewAttachments,
+    }
+end
+
+function addon:GetOriginalKeybinds()
+    if IsInGamepadPreferredMode() then
+        return self.originalGamepadDescriptors
+    else
+        return self.originalDescriptors
+    end
+end
+
+function addon.UpdateKeybindStrip()
+    if IsInGamepadPreferredMode() then
+        KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_MANAGER_GAMEPAD.inbox.mainKeybindDescriptor)
+    else
+        KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_INBOX.selectionKeybindStripDescriptor)
+    end
 end
 
 --[[   
@@ -1135,33 +1256,41 @@ end
     Return to sender - OR - Cancel take all, depending on context 
     
   ]]
-function Postmaster.Keybind_Negative_Callback()
-    local self = Postmaster
+function addon.Keybind_X_Callback()
+    local self = addon
     if self.taking then 
         -- Abort take all command
         if self.takingAll then
             self:Reset()
         end
+        return
+    end
+    local keybinds = self:GetOriginalKeybinds()
     -- Return to sender when not in the middle of a take all
-    elseif self.originalDescriptors.returnToSender.visible() then
-        self.originalDescriptors.returnToSender.callback()
+    if keybinds.returnToSender.visible() then
+        keybinds.returnToSender.callback()
     end
 end
-function Postmaster.Keybind_Negative_GetName()
-    local self = Postmaster
-    if self.originalDescriptors.returnToSender.visible() then
-        return self.originalDescriptors.returnToSender.name
+function addon.Keybind_X_GetName()
+    local self = addon
+    if self.taking then
+        return GetString(SI_CANCEL)
     end
-    return GetString(SI_CANCEL)
+    local keybinds = self:GetOriginalKeybinds()
+    if keybinds.returnToSender.visible() then
+        return keybinds.returnToSender.name
+    end
 end
-function Postmaster.Keybind_Negative_Visible()
-    local self = Postmaster
+function addon.Keybind_X_Visible()
+    local self = addon
     if self.takingAll then return true end
     if self:IsBusy() then return false end
     if MailR and MailR.IsMailIdSentMail(MAIL_INBOX.mailId) then
         return false
     end
-    return self.originalDescriptors.returnToSender.visible()
+    
+    local keybinds = self:GetOriginalKeybinds()
+    return keybinds.returnToSender.visible()
 end
 
 --[[   
@@ -1171,12 +1300,12 @@ end
     command is running.
     
   ]]
-function Postmaster.Keybind_Other_Callback()
-    local self = Postmaster
+function addon.Keybind_Other_Callback()
+    local self = addon
     self.Keybind_Other_Invoke(self.keybindButtonForCallback, "callback")
 end
-function Postmaster.Keybind_Other_Invoke(button, functionName)
-    local self = Postmaster
+function addon.Keybind_Other_Invoke(button, functionName)
+    local self = addon
     if self:IsBusy() then return end
     if not button then return end
     local buttonDescriptor = button.keybindButtonDescriptor
@@ -1185,8 +1314,8 @@ function Postmaster.Keybind_Other_Invoke(button, functionName)
     if type(functionInstance) ~= "function" then return end
     return functionInstance()
 end
-function Postmaster.Keybind_Other_Visible()
-    local self = Postmaster
+function addon.Keybind_Other_Visible()
+    local self = addon
     return self.Keybind_Other_Invoke(self.keybindButtonForVisible, "visible")
 end
 
@@ -1195,29 +1324,33 @@ end
     Take or Delete, depending on if the current mail has attachments or not.
     
   ]]
-function Postmaster.Keybind_Primary_Callback()
-    local self = Postmaster
+function addon.Keybind_Primary_Callback()
+    local self = addon
     if self:IsBusy() then return end
-    if self.originalDescriptors.delete.visible()
-       or (MailR and MailR.IsMailIdSentMail(MAIL_INBOX.mailId))
+    
+    local mailData = self.GetOpenMailData()
+    local keybinds = self:GetOriginalKeybinds
+    if keybinds.delete.visible()
+       or (MailR and MailR.IsMailIdSentMail(mailData.mailId))
     then
-        self.Debug("deleting mail id "..tostring(MAIL_INBOX.mailId))
-        self.originalDescriptors.delete.callback()
+        self.Debug("deleting mail id "..tostring(mailData.mailId))
+        keybinds.delete.callback()
         return
     end
     
-    local mailData = self.GetOpenMailData()
     if self:QuickTakeCanTake(mailData) then
         self.taking = true
     end
-    self.originalDescriptors.take.callback()
+    keybinds.take.callback()
 end
-function Postmaster.Keybind_Primary_GetName()
-    local self = Postmaster
-    if self.originalDescriptors.delete.visible() or
+function addon.Keybind_Primary_GetName()
+    local self = addon
+    
+    local keybinds = self:GetOriginalKeybinds()
+    if keybinds.delete.visible() or
        (MailR and MailR.IsMailIdSentMail(self.mailId))
     then
-        return self.originalDescriptors.delete.name
+        return keybinds.delete.name
     end
     
     local mailData = self.GetOpenMailData()
@@ -1227,13 +1360,14 @@ function Postmaster.Keybind_Primary_GetName()
         return GetString(SI_MAIL_READ_ATTACHMENTS_TAKE)
     end
 end
-function Postmaster.Keybind_Primary_Visible()
-    local self = Postmaster
+function addon.Keybind_Primary_Visible()
+    local self = addon
     if self:IsBusy() then return false end
     
-    if self.originalDescriptors.take.visible() then return true end
-    if MailR and MailR.IsMailIdSentMail(MAIL_INBOX.mailId) then return true end
-    return self.originalDescriptors.delete.visible()
+    local keybinds = self:GetOriginalKeybinds()
+    if keybinds.take.visible() then return true end
+    if MailR and MailR.IsMailIdSentMail(self.GetOpenMailData().mailId) then return true end
+    return keybinds.delete.visible()
 end
 
 --[[   
@@ -1241,8 +1375,8 @@ end
     Reply
     
   ]]
-function Postmaster.Keybind_Reply_Callback()
-    local self = Postmaster
+function addon.Keybind_Reply_Callback()
+    local self = addon
     
     -- Look up the current mail message in the inbox
     local mailData = self.GetOpenMailData()
@@ -1254,16 +1388,19 @@ function Postmaster.Keybind_Reply_Callback()
     local address = mailData.senderDisplayName
     local subject = mailData.subject
     
-    MAIL_SEND:ClearFields()
-    MAIL_SEND:SetReply(address, subject)
-    SCENE_MANAGER:CallWhen("mailSend", SCENE_SHOWN, self.FocusSendMailBody)
-    ZO_MainMenuSceneGroupBar.m_object:SelectDescriptor("mailSend")
+    if IsInGamepadPreferredMode() then
+        -- TODO: Implement Reply for Gamepad
+    else
+        MAIL_SEND:ClearFields()
+        MAIL_SEND:SetReply(address, subject)
+        SCENE_MANAGER:CallWhen("mailSend", SCENE_SHOWN, self.FocusSendMailBody)
+        ZO_MainMenuSceneGroupBar.m_object:SelectDescriptor("mailSend")
+    end
 end
-function Postmaster.Keybind_Reply_Visible()
-    local self = Postmaster
+function addon.Keybind_Reply_Visible()
+    local self = addon
     if self:IsBusy() then return false end
-    if MAIL_INBOX.mailId == nil then return end
-    local mailData = self:GetMailDataById(MAIL_INBOX.mailId)
+    local mailData = self.GetOpenMailData()
     if not mailData then return false end
     return not (mailData.fromCS or mailData.fromSystem)
 end
@@ -1273,8 +1410,8 @@ end
     Take All
     
   ]]
-function Postmaster.Keybind_TakeAll_Callback()
-    local self = Postmaster
+function addon.Keybind_TakeAll_Callback()
+    local self = addon
     if self:IsBusy() then return end
     if self:TakeAllCanTakeSelectedMail() then
         self.Debug("Selected mail has attachments. Taking.")
@@ -1290,8 +1427,8 @@ function Postmaster.Keybind_TakeAll_Callback()
         -- will call the take or delete callback when the message is read
     end
 end
-function Postmaster.Keybind_TakeAll_Visible()
-    local self = Postmaster
+function addon.Keybind_TakeAll_Visible()
+    local self = addon
     if self:IsBusy() or not self:TakeAllGetNext() then return false end
     return true
 end
@@ -1307,33 +1444,38 @@ end
   ]]
   
 --[[ Wire up all callback handlers ]]
-function Postmaster:CallbackSetup()
+function addon:CallbackSetup()
     CALLBACK_MANAGER:RegisterCallback("BackpackFullUpdate", self.Callback_BackpackFullUpdate)
-    MAIL_INBOX_SCENE:RegisterCallback("StateChange",        self.Callback_MailInbox_StateChange)
+    MAIL_INBOX_SCENE:RegisterCallback("StateChange", self.Callback_MailInbox_StateChange)
+    GAMEPAD_MAIL_INBOX_FRAGMENT:RegisterCallback("StateChange", self.Callback_MailInbox_StateChange)
 end
 
 --[[ Raised whenever the backpack inventory is populated. ]]
-function Postmaster.Callback_BackpackFullUpdate()
-    local self = Postmaster
+function addon.Callback_BackpackFullUpdate()
+    local self = addon
     self:DiscoverUniqueItemsInBackpack()
 end
 
 --[[ Raised whenever the inbox is shown or hidden. ]]
-function Postmaster.Callback_MailInbox_StateChange(oldState, newState)
-    if IsInGamepadPreferredMode() then return end
-    local self = Postmaster
+function addon.Callback_MailInbox_StateChange(oldState, newState)
+    local self = addon
     
     -- Inbox shown
-    if newState == SCENE_SHOWN then
+    if newState == SCENE_SHOWN or newState == SCENE_FRAGMENT_SHOWN then
         -- Request mail from the server that was originally requested while
         -- the inbox was closed
-        if(MAIL_INBOX.requestMailId) then
-            MAIL_INBOX:RequestReadMessage(MAIL_INBOX.requestMailId)
-            MAIL_INBOX.requestMailId = nil
+        if(self.requestMailId) then
+            if IsInGamepadPreferredMode() then
+                MAIL_MANAGER_GAMEPAD.inbox.mailList:SetSelectedDataByEval(function(data) return data.mailId == self.requestMailId end)
+            else
+                MAIL_INBOX:RequestReadMessage(self.requestMailId)
+            end
+            self.requestMailId = nil
         end
         -- If a mail is selected that was previously marked for deletion but never
         -- finished, automatically delete it.
-        if not self:TryDeleteMarkedMail(MAIL_INBOX.mailId) then
+        local mailData = self.GetOpenMailData()
+        if not self:TryDeleteMarkedMail(mailData.mailId) then
             -- If not deleting mail, then try auto returning mail
             self:TryAutoReturnMail()
         end
@@ -1341,7 +1483,7 @@ function Postmaster.Callback_MailInbox_StateChange(oldState, newState)
     -- Inbox hidden
     -- Reset state back to default when inbox hidden, since most server events
     -- will no longer fire with the inbox closed.
-    elseif newState == SCENE_HIDDEN then
+    elseif newState == SCENE_HIDDEN or SCENE_FRAGMENT_HIDDEN then
     
         self:Reset()
     end
@@ -1357,7 +1499,7 @@ end
     ===================================
   ]]
 
-function Postmaster:EventSetup()
+function addon:EventSetup()
     EVENT_MANAGER:RegisterForEvent(self.name, EVENT_INVENTORY_IS_FULL, self.Event_InventoryIsFull)
     EVENT_MANAGER:RegisterForEvent(self.name, EVENT_INVENTORY_SINGLE_SLOT_UPDATE, self.Event_InventorySingleSlotUpdate)
     EVENT_MANAGER:RegisterForEvent(self.name, EVENT_MAIL_INBOX_UPDATE, self.Event_MailInboxUpdate)
@@ -1379,26 +1521,25 @@ end
 --[[ Raised when an attempted item transfer to the backpack fails due to not 
      enough slots being available.  When this happens, we should abort any 
      pending operations and reset controller state. ]]
-function Postmaster.Event_InventoryIsFull(eventCode, numSlotsRequested, numSlotsFree)
-    if IsInGamepadPreferredMode() then return end
-    local self = Postmaster
+function addon.Event_InventoryIsFull(eventCode, numSlotsRequested, numSlotsFree)
+    local self = addon
     self:Reset()
-    KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_INBOX.selectionKeybindStripDescriptor)
+    self.UpdateKeybindStrip()
 end
 
 --[[ Raised when a player inventory slot is updated. ]]
-function Postmaster.Event_InventorySingleSlotUpdate(eventCode, bagId, slotIndex, isNewItem, itemSoundCategory, inventoryUpdateReason, stackCountChange)
+function addon.Event_InventorySingleSlotUpdate(eventCode, bagId, slotIndex, isNewItem, itemSoundCategory, inventoryUpdateReason, stackCountChange)
     if bagId ~= BAG_BACKPACK then
         return
     end
-    local self = Postmaster
+    local self = addon
     self:DiscoverUniqueBackpackItem(slotIndex)
 end
 
 --[[ Raised whenever new mail arrives.  When this happens, mark that we need to 
      check for auto-return mail. ]]
-function Postmaster.Event_MailInboxUpdate(eventCode)
-    local self = Postmaster
+function addon.Event_MailInboxUpdate(eventCode)
+    local self = addon
     if not self.settings.bounce then return end
     
     self.Debug("Setting self.inboxUpdated to true")
@@ -1411,9 +1552,8 @@ end
      Here, we trigger or cancel the next Take All loop,
      as well as automatically delete any empty messages marked for removal in the
      self.mailIdsMarkedForDeletion array. ]]
-function Postmaster.Event_MailReadable(eventCode, mailId)
-    if IsInGamepadPreferredMode() then return end
-    local self = Postmaster
+function addon.Event_MailReadable(eventCode, mailId)
+    local self = addon
     self.Debug("Event_MailReadable("..tostring(mailId)..")")
     EVENT_MANAGER:UnregisterForUpdate(self.name .. "Read")
         
@@ -1424,24 +1564,23 @@ function Postmaster.Event_MailReadable(eventCode, mailId)
         
     -- If a mail is selected that was previously marked for deletion but never
     -- finished, automatically delete it.
-    elseif not self:TryDeleteMarkedMail(MAIL_INBOX.mailId) then
-    
-        -- Otherwise, try auto-returning any new mail that's arrived
-        self:TryAutoReturnMail()
-    
+    else
+        local mailData = self:GetSelectedData()
+        if not self:TryDeleteMarkedMail(mailData.mailId) then
+            -- Otherwise, try auto-returning any new mail that's arrived
+            self:TryAutoReturnMail()
+        end
     end
 end
 
 --[[ Raised in response to a successful DeleteMail() call. Used to trigger 
      opening the next mail with attachments for Take All, or reset state 
      variables and refresh the keybind strip for Take. ]]
-function Postmaster.Event_MailRemoved(eventCode, mailId)
-    local self = Postmaster
+function addon.Event_MailRemoved(eventCode, mailId)
+    local self = addon
     if not self.taking then return end
     local deleteIndex = self:IsMailMarkedForDeletion(mailId)
     table.remove(self.mailIdsMarkedForDeletion, deleteIndex)
-    
-    if IsInGamepadPreferredMode() then return end
     
     if eventCode then
         
@@ -1454,7 +1593,7 @@ function Postmaster.Event_MailRemoved(eventCode, mailId)
     -- In the middle of auto-return
     if self.returning then return end
     
-    local isInboxOpen = SCENE_MANAGER:IsShowing("mailInbox")
+    local isInboxOpen = self.IsInboxShowing()
     
     -- For non-canceled take all requests, select the next mail for taking.
     -- It will be taken automatically by Event_MailReadable() once the 
@@ -1471,13 +1610,13 @@ function Postmaster.Event_MailRemoved(eventCode, mailId)
     -- If the inbox is still open when the delete comes through, refresh the
     -- keybind strip.
     if isInboxOpen then
-        KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_INBOX.selectionKeybindStripDescriptor)
+        self.UpdateKeybindStrip()
         
     -- If the inbox was closed when the actual delete came through from the
     -- server, it leaves the inbox list in an inconsistent (dirty) state.
     else
-        self.Debug("Setting inbox mail id to nil")
-        MAIL_INBOX.mailId = nil
+        self.Debug("Clearing selected mail")
+        self:ClearSelectedMail()
         
         -- if the inbox is open, try auto returning mail now
         self:TryAutoReturnMail()
@@ -1486,9 +1625,8 @@ end
 
 --[[ Raised after a sent mail message is received by the server. We only care
      about this event because C.O.D. mail cannot be deleted until it is raised. ]]
-function Postmaster.Event_MailSendSuccess(eventCode) 
-    if IsInGamepadPreferredMode() then return end
-    local self = Postmaster
+function addon.Event_MailSendSuccess(eventCode) 
+    local self = addon
     if not self.taking then return end
     self.Debug("Event_MailSendSuccess()")
     local mailIdString,codMail = self:GetFirstCompleteCodMail()
@@ -1500,9 +1638,8 @@ end
 
 --[[ Raised when attached items are all received into inventory from a mail.
      Used to automatically trigger mail deletion. ]]
-function Postmaster.Event_MailTakeAttachedItemSuccess(eventCode, mailId)
-    if IsInGamepadPreferredMode() then return end
-    local self = Postmaster
+function addon.Event_MailTakeAttachedItemSuccess(eventCode, mailId)
+    local self = addon
     if not self.taking then return end
     self.Debug("attached items taken "..tostring(mailId))
     local waitingForMoney = table.remove(self.awaitingAttachments[self.GetMailIdString(mailId)])
@@ -1517,9 +1654,8 @@ end
 
 --[[ Raised when attached gold is all received into inventory from a mail.
      Used to automatically trigger mail deletion. ]]
-function Postmaster.Event_MailTakeAttachedMoneySuccess(eventCode, mailId)
-    if IsInGamepadPreferredMode() then return end
-    local self = Postmaster
+function addon.Event_MailTakeAttachedMoneySuccess(eventCode, mailId)
+    local self = addon
     if not self.taking then return end
     self.Debug("attached money taken "..tostring(mailId))
     local waitingForItems = table.remove(self.awaitingAttachments[self.GetMailIdString(mailId)])
@@ -1535,9 +1671,8 @@ end
 --[[ Raised whenever gold enters or leaves the player's inventory.  We only care
      about money leaving inventory due to a mail event, indicating a C.O.D. payment.
      Used to automatically trigger mail deletion. ]]
-function Postmaster.Event_MoneyUpdate(eventCode, newMoney, oldMoney, reason)
-    if IsInGamepadPreferredMode() then return end
-    local self = Postmaster
+function addon.Event_MoneyUpdate(eventCode, newMoney, oldMoney, reason)
+    local self = addon
     if not self.taking then return end
     self.Debug("Event_MoneyUpdate("..tostring(eventCode)..","..tostring(newMoney)..","..tostring(oldMoney)..","..tostring(reason)..")")
     if reason ~= CURRENCY_CHANGE_REASON_MAIL or oldMoney <= newMoney then 
@@ -1578,35 +1713,36 @@ end
   ]]
 
 --[[ Wire up all prehook handlers ]]
-function Postmaster:PrehookSetup()
+function addon:PrehookSetup()
     ZO_PreHook(KEYBIND_STRIP, "SetUpButton", self.Prehook_KeybindStrip_ButtonSetup)
     ZO_PreHook("ZO_MailInboxShared_TakeAll", self.Prehook_MailInboxShared_TakeAll)
     ZO_PreHook("RequestReadMail", self.Prehook_RequestReadMail)
     ZO_PreHook("ZO_ScrollList_SelectData", self.Prehook_ScrollList_SelectData)
     ZO_PreHook("ZO_Dialogs_ShowDialog", self.Prehook_Dialogs_ShowDialog)
     ZO_PreHook("ZO_Dialogs_ShowGamepadDialog", self.Prehook_Dialogs_ShowGamepadDialog)
+    ZO_PreHook(MAIL_MANAGER_GAMEPAD.inbox, "InitializeEvents", self.KeybindSetupGamepad)
 end
 
 
 --[[ Suppress mail delete and/or return to sender dialog in keyboard mode, if configured ]]
-function Postmaster.Prehook_Dialogs_ShowDialog(name, data, textParams, isGamepad)
-    local self = Postmaster
+function addon.Prehook_Dialogs_ShowDialog(name, data, textParams, isGamepad)
+    local self = addon
     if self.settings.deleteDialogSuppress and name == "DELETE_MAIL" then 
         MAIL_INBOX:ConfirmDelete(MAIL_INBOX.mailId)
         return true
-    elseif Postmaster.settings.returnDialogSuppress and name == "MAIL_RETURN_ATTACHMENTS" then
+    elseif addon.settings.returnDialogSuppress and name == "MAIL_RETURN_ATTACHMENTS" then
         ReturnMail(MAIL_INBOX.mailId)
         return true
     end
 end
 
 --[[ Suppress mail delete and/or return to sender dialog in gamepad mode, if configured ]]
-function Postmaster.Prehook_Dialogs_ShowGamepadDialog(name, data, textParams)
-    local self = Postmaster
+function addon.Prehook_Dialogs_ShowGamepadDialog(name, data, textParams)
+    local self = addon
     if self.settings.deleteDialogSuppress and name == "DELETE_MAIL" then 
         MAIL_MANAGER_GAMEPAD.inbox:Delete()
         return true
-    elseif Postmaster.settings.returnDialogSuppress and name == "MAIL_RETURN_ATTACHMENTS" then
+    elseif addon.settings.returnDialogSuppress and name == "MAIL_RETURN_ATTACHMENTS" then
         MAIL_MANAGER_GAMEPAD.inbox:ReturnToSender()
         return true
     end
@@ -1614,31 +1750,32 @@ end
 
 --[[ Keybind callback and visible functions do not always reliably pass on data
      about their related descriptor.  Wire up callback and visible events on
-     the button to save the current button instance to Postmaster.keybindButtonForCallback
-     and Postmaster.keybindButtonForVisible, respectively.  They can then be used for
+     the button to save the current button instance to addon.keybindButtonForCallback
+     and addon.keybindButtonForVisible, respectively.  They can then be used for
      the "Other" keybind callbacks and visible methods that don't know which 
      button they were called from. ]]
-function Postmaster.Prehook_KeybindStrip_ButtonSetup(keybindStrip, button)
-    if not MAIL_INBOX_SCENE:IsShowing() then return end
+function addon.Prehook_KeybindStrip_ButtonSetup(keybindStrip, button)
+    local self = addon
+    if not self.IsInboxShowing() then return end
     local buttonDescriptor = button.keybindButtonDescriptor
     if not buttonDescriptor or not buttonDescriptor.callback or type(buttonDescriptor.callback) ~= "function" then return end
     local callback = buttonDescriptor.callback
     buttonDescriptor.callback = function(...)
-        Postmaster.keybindButtonForCallback = button
+        self.keybindButtonForCallback = button
         callback(...)
     end
     if not buttonDescriptor.visible or type(buttonDescriptor.visible) ~= "function" then return end
     local visible = buttonDescriptor.visible
     buttonDescriptor.visible = function(...)
-        Postmaster.keybindButtonForVisible = button
+        self.keybindButtonForVisible = button
         return visible(...)
     end
 end
 
 --[[ Runs before a mail's attachments are taken, recording attachment information
      and initializing controller state variables for the take operation. ]]
-function Postmaster.Prehook_MailInboxShared_TakeAll(mailId)
-    local self = Postmaster
+function addon.Prehook_MailInboxShared_TakeAll(mailId)
+    local self = addon
     if not self.taking then
         return
     end
@@ -1690,14 +1827,13 @@ end
      will filter out any subsequent requests for the same mail id until after
      a different mailId is requested.  Record the mail id as self.mailIdLastOpened
      so that we can request the mail again immediately when the inbox is opened. ]]
-function Postmaster.Prehook_RequestReadMail(mailId)
-    if IsInGamepadPreferredMode() then return end
-    local self = Postmaster
+function addon.Prehook_RequestReadMail(mailId)
+    local self = addon
     self.Debug("RequestReadMail("..tostring(mailId)..")")
     self.mailIdLastOpened = mailId
-    local inboxState = MAIL_INBOX_SCENE.state
+    local inboxState = self:GetInboxState()
     -- Avoid a double read request on inbox open
-    local deny = inboxState == SCENE_HIDDEN or inboxState == SCENE_HIDING
+    local deny = hiddenStates[inboxState]
     if deny then
         self.Debug("Inbox isn't open. Request denied.")
     end
@@ -1706,25 +1842,24 @@ end
 
 --[[ Runs before any scroll list selects an item by its data. We listen for inbox
      items that are selected when the inbox is closed, and then remember them 
-     in MAIL_INBOX.requestMailId so that the items can be selected as soon as 
+     in self.requestMailId so that the items can be selected as soon as 
      the inbox opens again. ]]
-function Postmaster.Prehook_ScrollList_SelectData(list, data, control, reselectingDuringRebuild)
-    if IsInGamepadPreferredMode() then return end
-    if list ~= ZO_MailInboxList then return end
-    local self = Postmaster
+function addon.Prehook_ScrollList_SelectData(list, data, control, reselectingDuringRebuild)
+    if list ~= ZO_MailInboxList and list ~= MAIL_MANAGER_GAMEPAD.inbox.mailList then return end
+    local self = addon
     self.Debug("ZO_ScrollList_SelectData("..tostring(list)
         ..", "..tostring(data)..", "..tostring(control)..", "
         ..tostring(reselectingDuringRebuild)..")")
-    local inboxState = MAIL_INBOX_SCENE.state
-    if inboxState == SCENE_HIDDEN or inboxState == SCENE_HIDING then
+    local inboxState = self:GetInboxState()
+    if hiddenStates[inboxState] then
         self.Debug("Clearing inbox mail id")
         -- clear mail id to avoid exceptions during inbox open
         -- it will be reselected by the EVENT_MAIL_READABLE event
-        MAIL_INBOX.mailId = nil 
+        self:ClearSelectedMail()
         -- remember the mail id so that it can be requested on mailbox open
         if data and type(data.mailId) == "number" then 
             self.Debug("Setting inbox requested mail id to "..tostring(data.mailId))
-            MAIL_INBOX.requestMailId = data.mailId 
+            self.requestMailId = data.mailId 
         end
     end
 end
@@ -1738,13 +1873,13 @@ end
   ]]
 
 --[[ Wire up all posthook handlers ]]
-function Postmaster:PosthookSetup()
+function addon:PosthookSetup()
     self.PostHook(MAIL_MANAGER_GAMEPAD.inbox, "RefreshMailList", self.Posthook_InboxScrollList_RefreshData)
     self.PostHook(ZO_MailInboxList, "RefreshData", self.Posthook_InboxScrollList_RefreshData)
 end
 
 --[[ Runs after the inbox scroll list's data refreshes, for both gamepad and 
      keyboard mail fragments. Used to trigger automatic mail return. ]]
-function Postmaster.Posthook_InboxScrollList_RefreshData(scrollList)
-    Postmaster:TryAutoReturnMail()
+function addon.Posthook_InboxScrollList_RefreshData(scrollList)
+    addon:TryAutoReturnMail()
 end

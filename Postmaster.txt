@@ -4,7 +4,7 @@
 ## Version: 4.0.0
 ## APIVersion: 100028 100029
 ## DependsOn: LibSavedVars LibAddonMenu-2.0 LibLootSummary
-## OptionalDependsOn: MailR wykkydsMailBox
+## OptionalDependsOn: MailR wykkydsMailBox LibDebugLogger
 ## SavedVariables: Postmaster_Account
 ## SavedVariables: Postmaster_Character
 
