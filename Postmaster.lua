@@ -10,7 +10,7 @@ Postmaster = {
     
     -- For development use only. Set to true to see a ridiculously verbose 
     -- activity log for this addon in the chat window.
-    debugMode = false,
+    debugMode = true,
     
     -- Flag to signal that once one email is taken and deleted, the next message 
     -- should be selected and the process should continue on it
@@ -339,8 +339,10 @@ function MailRead(retries)
     -- If there exists another message in the inbox that has attachments, select it. otherwise, clear the selection.
     local nextMailData, nextMailIndex = self:TakeAllGetNext()
     if IsInGamepadPreferredMode() then
-        self.Debug("Setting mail list selected index to " .. tostring(nextMailIndex))
-        MAIL_MANAGER_GAMEPAD.inbox.mailList:SetSelectedIndex(nextMailIndex)
+        if not self:TakeAllCanTake(MAIL_MANAGER_GAMEPAD.inbox:GetActiveMailData()) then
+            self.Debug("Setting mail list selected index to " .. tostring(nextMailIndex))
+            MAIL_MANAGER_GAMEPAD.inbox.mailList:SetSelectedIndex(nextMailIndex)
+        end
     else
         ZO_ScrollList_SelectData(ZO_MailInboxList, nextMailData)
     end
@@ -387,8 +389,8 @@ end
 
 --[[ Outputs formatted message to chat window if debugging is turned on ]]
 function addon.Debug(input, scopeDebug)
-    if not addon.logger then return end
-    addon.logger:Debug(input)
+    if not addon.debugMode and not scopeDebug then return end
+    addon.Print(input)
 end
 
 --[[ Registers a potential backpack slot as unique ]]--
@@ -724,8 +726,11 @@ function addon:Reset()
     self.taking = false
     self.takingAll = false
     self.mailIdsFailedDeletion = {}
-    ZO_MailInboxList.autoSelect = true
-    -- TODO: set gamepad to autoselect list?
+    if IsInGamepadPreferredMode() then
+        MAIL_MANAGER_GAMEPAD.inbox.mailList.autoSelect = true
+    else
+        ZO_MailInboxList.autoSelect = true
+    end
     -- Unwire timeout callbacks
     EVENT_MANAGER:UnregisterForUpdate(self.name .. "Delete")
     EVENT_MANAGER:UnregisterForUpdate(self.name .. "Read")
@@ -1423,13 +1428,21 @@ function addon.Keybind_TakeAll_Callback()
         self.Debug("Selected mail has attachments. Taking.")
         self.taking    = true
         self.takingAll = true
-        ZO_MailInboxList.autoSelect = false
+        if IsInGamepadPreferredMode() then
+            MAIL_MANAGER_GAMEPAD.inbox.mailList.autoSelect = false
+        else
+            ZO_MailInboxList.autoSelect = false
+        end
         self:TakeOrDeleteSelected()
     elseif self:TakeAllSelectNext() then
         self.Debug("Getting next mail with attachments")
         self.taking    = true
         self.takingAll = true
-        ZO_MailInboxList.autoSelect = false
+        if IsInGamepadPreferredMode() then
+            MAIL_MANAGER_GAMEPAD.inbox.mailList.autoSelect = false
+        else
+            ZO_MailInboxList.autoSelect = false
+        end
         -- will call the take or delete callback when the message is read
     end
 end
@@ -1481,7 +1494,7 @@ function addon.Callback_MailInbox_StateChange(oldState, newState)
         -- If a mail is selected that was previously marked for deletion but never
         -- finished, automatically delete it.
         local mailData = self.GetOpenMailData()
-        if not self:TryDeleteMarkedMail(mailData.mailId) then
+        if mailData and not self:TryDeleteMarkedMail(mailData.mailId) then
             -- If not deleting mail, then try auto returning mail
             self:TryAutoReturnMail()
         end
