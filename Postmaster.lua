@@ -46,7 +46,9 @@ Postmaster = {
     
     -- Contains details about C.O.D. mail being taken, since events related to
     -- taking C.O.D.s do not contain mail ids as parameters.
-    codMails = {}
+    codMails = {},
+    
+    classes = {}
 }
 
 local addon = Postmaster
@@ -339,10 +341,10 @@ function MailRead(retries)
     -- If there exists another message in the inbox that has attachments, select it. otherwise, clear the selection.
     local nextMailData, nextMailIndex = self:TakeAllGetNext()
     if IsInGamepadPreferredMode() then
-        if not self:TakeAllCanTake(MAIL_MANAGER_GAMEPAD.inbox:GetActiveMailData()) then
+        --[[if not self:TakeAllCanTake(MAIL_MANAGER_GAMEPAD.inbox:GetActiveMailData()) then
             self.Debug("Setting mail list selected index to " .. tostring(nextMailIndex))
             MAIL_MANAGER_GAMEPAD.inbox.mailList:SetSelectedIndex(nextMailIndex)
-        end
+        end]]
     else
         ZO_ScrollList_SelectData(ZO_MailInboxList, nextMailData)
     end
