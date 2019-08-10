@@ -836,7 +836,7 @@ end
 
 
 --[[ True if the given mail can be taken according to the given settings ]]
-local function CanTakeShared(mailData, settings)
+local function CanTakeShared(mailData, settings, debug)
 
     local self = addon
     
@@ -950,9 +950,127 @@ function addon:QuickTakeCanTake(mailData)
     })
 end
 
+function addon:TakeAllCanDelete(mailData, debug)
+    
+    if not mailData or not mailData.mailId or type(mailData.mailId) ~= "number" then 
+        self.Debug("Cannot take mail with empty mail id.", debug)
+        return false 
+    end
+    
+    local mailIdString = self.GetMailIdString(mailData.mailId)
+    if self.mailIdsFailedDeletion[mailIdString] == true then 
+        self.Debug("Cannot delete mail id " .. mailIdString .. " because it already failed deletion", debug)
+        return false
+    end
+    
+    -- Item was meant to be deleted, but the inbox closed, so include it in 
+    -- the take all list
+    if self:IsMailMarkedForDeletion(mailData.mailId) then
+        return true
+    end
+    
+    local deleteSettings = {
+        cod              = self.settings.takeAllCodDelete,
+        playerEmpty      = self.settings.takeAllPlayerDeleteEmpty,
+        playerAttached   = self.settings.takeAllPlayerAttachedDelete,
+        playerReturned   = self.settings.takeAllPlayerReturnedDelete,
+        systemEmpty      = self.settings.takeAllSystemDeleteEmpty,
+        systemAttached   = self.settings.takeAllSystemAttachedDelete,
+        systemGuildStore = self.settings.takeAllSystemGuildStoreDelete,
+        systemHireling   = self.settings.takeAllSystemHirelingDelete,
+        systemOther      = self.settings.takeAllSystemOtherDelete,
+        systemPvp        = self.settings.takeAllSystemPvpDelete,
+        systemUndaunted  = self.settings.takeAllSystemUndauntedDelete,
+    }
+    
+    -- Handle C.O.D. mail
+    if mailData.codAmount and mailData.codAmount > 0 then
+        if not deleteSettings.cod then
+            self.Debug("Cannot delete COD mail id " .. mailIdString, debug)
+        end
+        return deleteSettings.cod
+    end
+    
+    local fromSystem = (mailData.fromCS or mailData.fromSystem)
+    local hasAttachments = (mailData.attachedMoney and mailData.attachedMoney > 0) or (mailData.numAttachments and mailData.numAttachments > 0)
+    if hasAttachments then
+        
+        -- Special handling for hireling mail, since we know even without opening it that
+        -- all the attachments can potentially go straight to the craft bag
+        local subjectField = "subject"
+        local isHirelingMail = fromSystem and self:MailFieldMatch(mailData, subjectField, systemEmailSubjects["craft"])
+        
+        if fromSystem then 
+            if deleteSettings.systemAttached then
+                
+                if isHirelingMail then
+                    if not deleteSettings.systemHireling then
+                        self.Debug("Cannot delete hireling mail id " .. mailIdString, debug)
+                    end
+                    return deleteSettings.systemHireling
+                
+                elseif self:MailFieldMatch(mailData, subjectField, systemEmailSubjects["guildStore"]) then
+                    if not deleteSettings.systemGuildStore then
+                        self.Debug("Cannot delete guild store mail id " .. mailIdString, debug)
+                    end
+                    return deleteSettings.systemGuildStore
+                    
+                elseif self:MailFieldMatch(mailData, subjectField, systemEmailSubjects["pvp"]) 
+                       or self:MailFieldMatch(mailData, "senderDisplayName", systemEmailSenders["pvp"])
+                then
+                    if not deleteSettings.systemPvp then
+                        self.Debug("Cannot delete PvP rewards mail id " .. mailIdString, debug)
+                    end
+                    return deleteSettings.systemPvp
+                
+                elseif self:MailFieldMatch(mailData, "senderDisplayName", systemEmailSenders["undaunted"]) then
+                    if not deleteSettings.systemUndaunted then
+                        self.Debug("Cannot delete Undaunted rewards mail id " .. mailIdString, debug)
+                    end
+                    return deleteSettings.systemUndaunted
+                    
+                else 
+                    if not deleteSettings.systemOther then
+                        self.Debug("Cannot delete uncategorized system mail id " .. mailIdString, debug)
+                    end
+                    return deleteSettings.systemOther
+                end
+                    
+            else
+                if not deleteSettings.systemAttached then
+                    self.Debug("Cannot delete system mail with attachments id " .. mailIdString, debug)
+                end
+                return false
+            end
+        elseif mailData.returned then
+                if not deleteSettings.playerReturned then
+                    self.Debug("Cannot delete returned mail id " .. mailIdString, debug)
+                end
+            return deleteSettings.playerReturned 
+        else
+            if not deleteSettings.playerAttached then
+                self.Debug("Cannot delete player mail with attachments id " .. mailIdString, debug)
+            end
+            return deleteSettings.playerAttached 
+        end
+    else
+        if fromSystem then
+            if not deleteSettings.systemEmpty then
+                self.Debug("Cannot delete empty system mail id " .. mailIdString, debug)
+            end
+            return deleteSettings.systemEmpty
+        else 
+            if not deleteSettings.playerEmpty then
+                self.Debug("Cannot delete empty player mail id " .. mailIdString, debug)
+            end
+            return deleteSettings.playerEmpty 
+        end
+    end
+end
+
 --[[ True if the given mail can be taken by Take All operations according
      to current options panel criteria. ]]
-function addon:TakeAllCanTake(mailData)
+function addon:TakeAllCanTake(mailData, debug)
     return CanTakeShared(mailData, {
         ["codTake"]           = self.settings.takeAllCodTake,
         ["codGoldLimit"]      = self.settings.takeAllCodGoldLimit,
@@ -967,7 +1085,8 @@ function addon:TakeAllCanTake(mailData)
         ["playerAttached"]    = self.settings.takeAllPlayerAttached,
         ["systemDeleteEmpty"] = self.settings.takeAllSystemDeleteEmpty,
         ["playerDeleteEmpty"] = self.settings.takeAllPlayerDeleteEmpty,
-    })
+    },
+    debug)
 end
 
 --[[ True if the currently-selected mail can be taken by Take All operations 

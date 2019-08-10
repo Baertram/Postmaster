@@ -13,10 +13,10 @@ function class.MailTaker:New(...)
     return instance
 end
 
-function class.MailTaker:Initialize(mailId, remove)
+function class.MailTaker:Initialize(mailData, remove)
     self.name = addon.name .. "_MailTaker_" .. tostring(mailId)
-    self.mailId = mailId
-    self.mailIdString = zo_getSafeId64Key(mailId)  
+    self.mailData = mailData.mailId
+    self.mailIdString = self.mailData.mailId and zo_getSafeId64Key(mailData.mailId) or ""
     self.remove = remove  
     -- Contains detailed information about mail attachments (links, money, cod)
     -- for mail currently being taken.  Used to display summaries to chat.
@@ -27,7 +27,7 @@ end
 
 function class.MailTaker:CreateMailReadableHandler(retries)
     return function(eventCode, mailId)
-        if not AreId64sEqual(mailId, self.mailId) then
+        if not AreId64sEqual(mailId, self.mailData.mailId) then
             return
         end
         EVENT_MANAGER:UnregisterForUpdate(self.name .. "Readable")
@@ -54,7 +54,7 @@ function class.MailTaker:CreateMailReadableHandler(retries)
         if numAttachments > 0 and uniqueAttachmentConflictCount == numAttachments then
             self.Debug("Not taking attachments for " .. self.mailIdString
                        .." because it contains only unique items that are already in the backpack", debug)
-            self:FireCallbacks("Failed", mailId, "Contains Unique Items In Bag")
+            self:OnFailed("Unique")
             return
         end
                 
@@ -78,7 +78,7 @@ function class.MailTaker:CreateMailReadableHandler(retries)
             
             EVENT_MANAGER:RegisterForUpdate(self.name .. "Removed", timeoutMilliseconds, createTimeout(self, "Removed", false, retries))
             EVENT_MANAGER:RegisterForEvent(self.name, EVENT_MAIL_REMOVED, self:CreateMailRemovedHandler())
-            DeleteMail(self.mailId, false)
+            DeleteMail(self.mailData.mailId, false)
             
         else
             self:OnDone()
@@ -90,7 +90,7 @@ end
 --[[ Raised in response to a successful DeleteMail() call. ]]
 function class.MailTaker:CreateMailRemovedHandler()
     return function(eventCode, mailId)
-        if not AreId64sEqual(mailId, self.mailId) then
+        if not AreId64sEqual(mailId, self.mailData.mailId) then
             return
         end
         
@@ -108,7 +108,7 @@ end
 --[[ Raised when attached items are all received into inventory from a mail. ]]
 function class.MailTaker:CreateMailTakeAttachedItemSuccessHandler()
     return function (eventCode, mailId)
-        if not AreId64sEqual(mailId, self.mailId) then
+        if not AreId64sEqual(mailId, self.mailData.mailId) then
             return
         end
         
@@ -126,7 +126,7 @@ end
 --[[ Raised when attached gold is all received from a mail.  ]]
 function class.MailTaker:CreateMailTakeAttachedMoneySuccessHandler()
     return function(eventCode, mailId)
-        if not AreId64sEqual(mailId, self.mailId) then
+        if not AreId64sEqual(mailId, self.mailData.mailId) then
             return
         end
       
@@ -174,19 +174,19 @@ end
 
 function class.MailTaker:OnDone()
     addon.Debug("Done() mail id " .. self.mailIdString, debug)
-    self:FireCallbacks("Done", self.mailId, self.attachmentData)
+    self:FireCallbacks("Done", self.mailData, self.attachmentData)
 end
 
 function class.MailTaker:OnFailed(reason)
     addon.Debug("Failed(" .. reason .. ") mail id " .. self.mailIdString, debug)
-    self:FireCallbacks("Failed", reason, self.mailId, self.attachmentData)
+    self:FireCallbacks("Failed", reason, self.mailData, self.attachmentData)
     self:Reset()
 end
 
 function class.MailTaker:OnTaken()
     addon.Debug("Taken() mail id " .. self.mailIdString, debug)
     EVENT_MANAGER:UnregisterForUpdate(self.name .. "Taken")
-    self:FireCallbacks("Taken", self.mailId, self.attachmentData)
+    self:FireCallbacks("Taken", self.mailData, self.attachmentData)
     if self.remove then
         self:Remove()
     else
@@ -238,15 +238,19 @@ function takeOrRemove(self, take, retries)
     if retries then
         addon.Debug("Attempt #" .. tostring(retries), debug)
     end
-    local readable = IsReadMailInfoReady(self.mailId)
+    if self.mailData == nil or self.mailData.mailId == nil then
+        self:OnDone()
+        return
+    end
+    local readable = IsReadMailInfoReady(self.mailData.mailId)
     local handler = self:CreateMailReadableHandler(retries)
     if readable then
         addon.Debug("Mail id " .. self.mailIdString .. " is READABLE.", debug)
-        handler(nil, self.mailId)
+        handler(nil, self.mailData.mailId)
         return
     end
     addon.Debug("Mail id " .. self.mailIdString .. " is NOT readable. Requesting mail read.", debug)
     EVENT_MANAGER:RegisterForUpdate(self.name .. "Readable", timeoutMilliseconds, createTimeout(self, "Readable", take, retries))
     EVENT_MANAGER:RegisterForEvent(self.name, EVENT_MAIL_READABLE, handler)
-    ReadMail(self.mailId)
+    ReadMail(self.mailData.mailId)
 end
