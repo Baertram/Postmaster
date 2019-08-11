@@ -84,6 +84,7 @@ local function OnAddonLoaded(eventCode, addOnName)
     
     -- Initialize settings menu, saved vars, and slash commands to open settings
     self:SettingsSetup()
+    self:PosthookSetup()
     
     self:SetActiveModule(IsInGamepadPreferredMode())
     

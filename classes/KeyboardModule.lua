@@ -21,11 +21,11 @@ function class.KeyboardModule:Reply(address, subject)
 end
 
 function class.KeyboardModule:SetupKeybinds()
-    local inbox = MAIL_MANAGER_GAMEPAD.inbox
     self.keybindWrapper = class.KeybindWrapper:New(
         self.name .. "_KeybindWrapper", 
-        inbox, "mainKeybindDescriptor", 
+        MAIL_INBOX, "selectionKeybindStripDescriptor", 
         keyboardKeybindOrder)
+    
     local returnKeybind = self.keybindWrapper:GetOriginalKeybind("UI_SHORTCUT_SECONDARY")
     
     self.keybindWrapper:SetCustomKeybinds(
@@ -44,7 +44,12 @@ function class.KeyboardModule:SetupKeybinds()
                 keybind = "UI_SHORTCUT_NEGATIVE",
                 name = returnKeybind.name,
                 callback = returnKeybind.callback,
-                visible = returnKeybind.visible
+                visible = function()
+                    if self.takeAll and self.takeAll.state == "active" then
+                        return false
+                    end
+                    return returnKeybind.visible()
+                end
             }
         }
     )

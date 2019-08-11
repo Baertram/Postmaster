@@ -12,7 +12,8 @@ end
 function class.SharedModule:Initialize(name, sceneOrFragment)
     self.name = name or addon.name .. "_SharedModule"
     self.sceneOrFragment = sceneOrFragment
-    self.stateChangeCallback = self.CreateSceneOrFragmentStateChangeCallback()
+    self.stateChangeCallback = self:CreateSceneOrFragmentStateChangeCallback()
+    self.sceneOrFragment:RegisterCallback("StateChange", self.stateChangeCallback)
 end
 
 function class.SharedModule:CreateSceneOrFragmentStateChangeCallback()
@@ -23,22 +24,24 @@ function class.SharedModule:CreateSceneOrFragmentStateChangeCallback()
             
             self.takeAll = class.TakeAll:New(self.name .. "_TakeAll")
             self.takeAll:RegisterCallback("StateChanged", function() self.keybindWrapper:Refresh() end)
+            local mailList, dataField = self:GetMailList()
+            
+            -- TODO: whenever a new mail is added, removed, or updated, need to update the queue
+            for _, entry in ipairs(mailList) do
+                self.takeAll:TryQueue(entry[dataField])
+            end
             if not self.keybindWrapper then
                 self:SetupKeybinds()
             end
             self.keybindWrapper:WrapKeybinds()
-            local mailList, dataField = self:GetMailList()
-            for _, entry in ipairs(mailList) do
-                self.takeAll:TryQueue(entry[dataField])
-            end
         
         -- Inbox hidden
         -- Reset state back to default when inbox hidden, since most server events
         -- will no longer fire with the inbox closed.
-        elseif newState == SCENE_HIDDEN or SCENE_FRAGMENT_HIDDEN then
+        elseif newState == SCENE_HIDDEN or newState == SCENE_FRAGMENT_HIDDEN then
         
             self.keybindWrapper:UnwrapKeybinds()
-            self:Reset()
+            self.takeAll = nil
         end
     end
 end
@@ -143,10 +146,16 @@ function class.SharedModule:CreateTakeDeleteKeybind(originalDeleteKeybind)
                 return
             end
             
-            self.Debug("Taking attachments from mail id " .. mailIdString, debug)
-            take.callback()
+            addon.Debug("Taking attachments from mail id " .. mailIdString, debug)
+            if addon:QuickTakeCanTake(mailData) then
+                local mailTaker = class.MailTaker:New(mailData, true)
+                mailTaker:Take()
+            else
+                take.callback()
+            end
         end,
         visible = function()
+            if self.takeAll and self.takeAll.state == "active" then return false end
             if take.visible() then return true end
             if MailR and MailR.IsMailIdSentMail(self.GetOpenMailData().mailId) then return true end
             return delete.visible()

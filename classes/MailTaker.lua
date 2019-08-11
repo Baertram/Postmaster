@@ -15,8 +15,8 @@ end
 
 function class.MailTaker:Initialize(mailData, remove)
     self.name = addon.name .. "_MailTaker_" .. tostring(mailId)
-    self.mailData = mailData.mailId
-    self.mailIdString = self.mailData.mailId and zo_getSafeId64Key(mailData.mailId) or ""
+    self.mailData = mailData
+    self.mailIdString = mailData.mailId and zo_getSafeId64Key(mailData.mailId) or ""
     self.remove = remove  
     -- Contains detailed information about mail attachments (links, money, cod)
     -- for mail currently being taken.  Used to display summaries to chat.
@@ -52,19 +52,19 @@ function class.MailTaker:CreateMailReadableHandler(retries)
         
         -- If all attachments were unique and already in the backpack
         if numAttachments > 0 and uniqueAttachmentConflictCount == numAttachments then
-            self.Debug("Not taking attachments for " .. self.mailIdString
+            addon.Debug("Not taking attachments for " .. self.mailIdString
                        .." because it contains only unique items that are already in the backpack", debug)
             self:OnFailed("Unique")
             return
         end
                 
-        if #self.attachmentData.items > 0 or self.money > 0 then
+        if #self.attachmentData.items > 0 or self.attachmentData.money > 0 then
           
             EVENT_MANAGER:RegisterForUpdate(self.name .. "Taken", timeoutMilliseconds, createTimeout(self, "Taken", true, retries))
             
             if self.awaitingAttachments.items then
                 EVENT_MANAGER:RegisterForEvent(self.name, EVENT_MAIL_TAKE_ATTACHED_ITEM_SUCCESS, self:CreateMailTakeAttachedItemSuccessHandler())
-                if self.cod > 0 then
+                if self.awaitingAttachments.cod > 0 then
                     EVENT_MANAGER:RegisterForEvent(self.name, EVENT_MONEY_UPDATE, self:CreateMoneyUpdateHandler())
                 end
                 TakeMailAttachedItems(mailId)
@@ -97,7 +97,7 @@ function class.MailTaker:CreateMailRemovedHandler()
         EVENT_MANAGER:UnregisterForUpdate(self.name .. "Removed")
         EVENT_MANAGER:UnregisterForEvent(self.name, EVENT_MAIL_REMOVED)
         
-        self.Debug("EVENT_MAIL_REMOVED(" .. tostring(eventCode) .. ", " .. self.mailIdString .. ")", debug)
+        addon.Debug("EVENT_MAIL_REMOVED(" .. tostring(eventCode) .. ", " .. self.mailIdString .. ")", debug)
         
         PlaySound(SOUNDS.MAIL_ITEM_DELETED)
         
@@ -112,7 +112,7 @@ function class.MailTaker:CreateMailTakeAttachedItemSuccessHandler()
             return
         end
         
-        self.Debug("EVENT_MAIL_TAKE_ATTACHED_ITEM_SUCCESS(" .. tostring(eventCode) .. ", " .. self.mailIdString .. ")", debug)
+        addon.Debug("EVENT_MAIL_TAKE_ATTACHED_ITEM_SUCCESS(" .. tostring(eventCode) .. ", " .. self.mailIdString .. ")", debug)
         
         EVENT_MANAGER:UnregisterForEvent(self.name, EVENT_MAIL_TAKE_ATTACHED_ITEM_SUCCESS)
         
@@ -130,7 +130,7 @@ function class.MailTaker:CreateMailTakeAttachedMoneySuccessHandler()
             return
         end
       
-        self.Debug("EVENT_MAIL_TAKE_ATTACHED_MONEY_SUCCESS(" .. tostring(eventCode) .. ", " .. self.mailIdString .. ")", debug)
+        addon.Debug("EVENT_MAIL_TAKE_ATTACHED_MONEY_SUCCESS(" .. tostring(eventCode) .. ", " .. self.mailIdString .. ")", debug)
         
         EVENT_MANAGER:UnregisterForEvent(self.name, EVENT_MAIL_TAKE_ATTACHED_MONEY_SUCCESS)
         
@@ -145,12 +145,12 @@ end
      about money leaving inventory due to a mail event, indicating a C.O.D. payment. ]]--
 function class.MailTaker:CreateMoneyUpdateHandler()
     return function(eventCode, newMoney, oldMoney, reason)
-        self.Debug("EVENT_MONEY_UPDATE("..tostring(eventCode)..","..tostring(newMoney)..","..tostring(oldMoney)..","..tostring(reason)..")", debug)
+        addon.Debug("EVENT_MONEY_UPDATE("..tostring(eventCode)..","..tostring(newMoney)..","..tostring(oldMoney)..","..tostring(reason)..")", debug)
         if reason ~= CURRENCY_CHANGE_REASON_MAIL then 
-            self.Debug("Currency change did not due to mail.", debug)
+            addon.Debug("Currency change did not due to mail.", debug)
             return
         elseif oldMoney <= newMoney then
-            self.Debug("Money increased, so event can't be from a COD payment.", debug)
+            addon.Debug("Money increased, so event can't be from a COD payment.", debug)
             return
         end
         

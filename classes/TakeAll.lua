@@ -85,6 +85,7 @@ function class.TakeAll:OnStateChanged(oldState)
 end
 
 function class.TakeAll:SetState(state)
+    addon.Debug("Setting TakeAll state to " .. tostring(state), debug)
     local oldState = self.state
     self.state = state
     if state == "stopped" and self.mailTaker then
@@ -97,12 +98,12 @@ function class.TakeAll:SetState(state)
 end
 
 function class.TakeAll:Start()
-    if self:HasQueuedMail() then
+    if not self:HasQueuedMail() then
         return
     end
     self:SetState("active")
     local mailData = table.remove(self.queue, 1)
-    self.mailTaker = class.MailTaker:New(mailData.mailId, self:CanDelete(mailData))
+    self.mailTaker = class.MailTaker:New(mailData, self:CanDelete(mailData))
     self.mailTaker:RegisterCallback("Done", self:CreateMailTakerDoneCallback())
     self.mailTaker:RegisterCallback("Failed", self:CreateMailTakerFailedCallback())
     self.mailTaker:RegisterCallback("Removed", self:CreateMailTakerRemovedCallback())

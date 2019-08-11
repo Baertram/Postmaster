@@ -48,6 +48,7 @@ end
 
 function class.KeybindWrapper:UnwrapKeybinds()
     self.target[self.descriptorName] = self.originalKeybinds
+    self:Refresh()
 end
 
 function class.KeybindWrapper:WrapKeybinds()
@@ -60,7 +61,10 @@ function class.KeybindWrapper:WrapKeybinds()
             table.insert(descriptor, keybindOptions)
         end
     end
+    KEYBIND_STRIP:RemoveKeybindButtonGroup(self.target[self.descriptorName])
     self.target[self.descriptorName] = descriptor
+    KEYBIND_STRIP:AddKeybindButtonGroup(self.target[self.descriptorName])
+    self:Refresh()
 end
 
 -- Local functions
