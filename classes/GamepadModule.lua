@@ -39,13 +39,13 @@ function class.GamepadModule:SetupKeybinds()
             -- Take All
             self:CreateTakeAllKeybind("UI_SHORTCUT_QUATERNARY"),
 
-            -- Return to Sender
-            {
-                keybind = "UI_SHORTCUT_SECONDARY",
-                name = returnOption.text,
-                callback = returnOption.selectedCallback,
-                visible = function() return IsMailReturnable(inbox:GetActiveMailId()) end
-            },
+            -- Cancel / Return to Sender
+            self:CreateCancelReturnKeybind("UI_SHORTCUT_SECONDARY", 
+                {
+                    name = returnOption.text,
+                    callback = returnOption.selectedCallback,
+                    visible = function() return IsMailReturnable(inbox:GetActiveMailId()) end
+                }),
             
             -- Reply
             self:CreateReplyKeybind(),

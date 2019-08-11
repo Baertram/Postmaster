@@ -46,15 +46,6 @@ function class.SharedModule:CreateSceneOrFragmentStateChangeCallback()
     end
 end
 
-function class.SharedModule:Reset()
-    self.takeAll = nil
-    self.sceneOrFragment:UnregisterCallback("StateChange", self.stateChangeCallback)
-end
-
-function class.SharedModule:SetupKeybinds()
-    -- Todo: overload this
-end
-
 --[[   
  
     Reply
@@ -83,6 +74,30 @@ function class.SharedModule:CreateReplyKeybind()
             local mailData = addon.GetOpenMailData()
             if not mailData then return false end
             return not (mailData.fromCS or mailData.fromSystem)
+        end
+    }
+end
+function class.SharedModule:CreateCancelReturnKeybind(keybind, originalReturnKeybind)
+    return {
+        keybind = "UI_SHORTCUT_NEGATIVE",
+        name = function()
+            if self.takeAll and self.takeAll.state == "active" then
+                return GetString(SI_CANCEL)
+            end
+            return originalReturnKeybind.name
+        end,
+        callback = function()
+            if self.takeAll and self.takeAll.state == "active" then
+                self.takeAll:Cancel()
+                return
+            end
+            originalReturnKeybind.callback()
+        end,
+        visible = function()
+            if self.takeAll and self.takeAll.state == "active" then
+                return false
+            end
+            return originalReturnKeybind.visible()
         end
     }
 end
@@ -169,4 +184,13 @@ end
 
 function class.SharedModule:Reply(address, subject)
     -- TODO: overload this
+end
+
+function class.SharedModule:Reset()
+    self.takeAll = nil
+    self.sceneOrFragment:UnregisterCallback("StateChange", self.stateChangeCallback)
+end
+
+function class.SharedModule:SetupKeybinds()
+    -- Todo: overload this
 end

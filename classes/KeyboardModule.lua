@@ -39,18 +39,8 @@ function class.KeyboardModule:SetupKeybinds()
             -- Take All
             self:CreateTakeAllKeybind("UI_SHORTCUT_SECONDARY"),
 
-            -- Return to Sender
-            {
-                keybind = "UI_SHORTCUT_NEGATIVE",
-                name = returnKeybind.name,
-                callback = returnKeybind.callback,
-                visible = function()
-                    if self.takeAll and self.takeAll.state == "active" then
-                        return false
-                    end
-                    return returnKeybind.visible()
-                end
-            }
+            -- Cancel / Return to Sender
+            self:CreateCancelReturnKeybind("UI_SHORTCUT_NEGATIVE", returnKeybind)
         }
     )
     
