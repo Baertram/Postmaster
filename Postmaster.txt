@@ -22,3 +22,11 @@ Postmaster.lua
 
 ; Settings
 Settings.lua
+
+; Classes
+classes\SharedModule.lua
+classes\GamepadModule.lua
+classes\KeyboardModule.lua
+classes\KeybindWrapper.lua
+classes\MailTaker.lua
+classes\TakeAll.lua

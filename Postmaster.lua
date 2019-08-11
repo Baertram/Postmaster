@@ -48,7 +48,7 @@ Postmaster = {
     -- taking C.O.D.s do not contain mail ids as parameters.
     codMails = {},
     
-    classes = {}
+    classes = {},
 }
 
 local addon = Postmaster
@@ -57,21 +57,6 @@ addon.logger = LibDebugLogger and LibDebugLogger(addon.name)
 -- Format for chat print and debug messages, with addon title prefix
 PM_CHAT_PREFIX = zo_strformat("<<1>>", addon.title) .. "|cFFFFFF: "
 PM_CHAT_FORMAT = PM_CHAT_PREFIX .. " <<1>>|r"
-
--- Max milliseconds to wait for a mail removal event from the server after calling DeleteMail
-PM_DELETE_MAIL_TIMEOUT_MS = 1500
-
--- Number of time to try deleting the message if it fails
-PM_DELETE_MAIL_MAX_RETRIES = 3
-
-PM_MAIL_READ_TIMEOUT_MS = 1500
-PM_MAIL_READ_MAX_RETRIES = 1
-
--- Max milliseconds to wait for attachments to be retreived after calling ZO_MailInboxShared_TakeAll
-PM_TAKE_TIMEOUT_MS = 1500
-
--- Number of time to try taking attachments if the attempt fails
-PM_TAKE_ATTACHMENTS_MAX_RETRIES = 3
 
 -- Prefixes for bounce mail subjects
 PM_BOUNCE_MAIL_PREFIXES = {
@@ -100,22 +85,12 @@ local function OnAddonLoaded(eventCode, addOnName)
     -- Initialize settings menu, saved vars, and slash commands to open settings
     self:SettingsSetup()
     
-    -- Wire up scene callbacks
-    self:CallbackSetup()
+    self:SetActiveModule(IsInGamepadPreferredMode())
     
-    -- Wire up server event handlers
-    self:EventSetup()
-    
-    -- Wire up prehooks for ESOUI functions
-    self:PrehookSetup()
-    
-    -- Wire up posthooks for ESOUI functions
-    self:PosthookSetup()
-    
-    -- Replace keybinds in the mouse/keyboard inbox UI
-    self:KeybindSetupKeyboard()
-    
-    -- Note: gamepad keybind setup is done in a prehook to the gamepad inbox InitializeEvents method.
+    EVENT_MANAGER:RegisterForEvent(self.name, EVENT_GAMEPAD_PREFERRED_MODE_CHANGED,
+        function(eventCode, gamepadPreferred)
+            self:SetActiveModule(gamepadPreferred)
+        end)
 end
 
 local systemEmailSubjects = {
@@ -157,6 +132,17 @@ local systemEmailSenders = {
         zo_strlower(GetString(SI_PM_BATTLEGROUNDS_NPC)),
     },
 }
+
+function addon:SetActiveModule(gamepadPreferred)
+    if self.activeModule then
+        self.activeModule:Reset()
+    end
+    if gamepadPreferred then
+        self.activeModule = self.classes.GamepadModule:New()
+    else
+        self.activeModule = self.classes.KeyboardModule:New()
+    end
+end
 
 local function CanTakeAllDelete(mailData, attachmentData)
 
@@ -1451,56 +1437,6 @@ function addon.Keybind_Other_Visible()
     return self.Keybind_Other_Invoke(self.keybindButtonForVisible, "visible")
 end
 
---[[   
- 
-    Take or Delete, depending on if the current mail has attachments or not.
-    
-  ]]
-function addon.Keybind_Primary_Callback()
-    local self = addon
-    if self:IsBusy() then return end
-    
-    local mailData = self.GetOpenMailData()
-    local keybinds = self:GetOriginalKeybinds()
-    if keybinds.delete.visible()
-       or (MailR and MailR.IsMailIdSentMail(mailData.mailId))
-    then
-        self.Debug("deleting mail id "..tostring(mailData.mailId))
-        keybinds.delete.callback()
-        return
-    end
-    
-    if self:QuickTakeCanTake(mailData) then
-        self.taking = true
-    end
-    keybinds.take.callback()
-end
-function addon.Keybind_Primary_GetName()
-    local self = addon
-    
-    local keybinds = self:GetOriginalKeybinds()
-    if keybinds.delete.visible() or
-       (MailR and MailR.IsMailIdSentMail(self.mailId))
-    then
-        return keybinds.delete.name
-    end
-    
-    local mailData = self.GetOpenMailData()
-    if self:QuickTakeCanTake(mailData) then
-        return GetString(SI_LOOT_TAKE)
-    else
-        return GetString(SI_MAIL_READ_ATTACHMENTS_TAKE)
-    end
-end
-function addon.Keybind_Primary_Visible()
-    local self = addon
-    if self:IsBusy() then return false end
-    
-    local keybinds = self:GetOriginalKeybinds()
-    if keybinds.take.visible() then return true end
-    if MailR and MailR.IsMailIdSentMail(self.GetOpenMailData().mailId) then return true end
-    return keybinds.delete.visible()
-end
 
 --[[   
  
@@ -1525,7 +1461,7 @@ function addon.Keybind_Reply_Callback()
     else
         MAIL_SEND:ClearFields()
         MAIL_SEND:SetReply(address, subject)
-        SCENE_MANAGER:CallWhen("mailSend", SCENE_SHOWN, self.FocusSendMailBody)
+        SCENE_MANAGER:CallWhen("mailSend", SCENE_SHOWN, function() ZO_MailSendBodyField:TakeFocus() end)
         ZO_MainMenuSceneGroupBar.m_object:SelectDescriptor("mailSend")
     end
 end

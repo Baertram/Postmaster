@@ -84,14 +84,6 @@ function class.TakeAll:OnStateChanged(oldState)
     self:FireCallbacks("StateChanged", oldState, self.state)
 end
 
-function class.TakeAll:Queue(mailData)
-    if not self:CanTake(mailData) and not self:CanDelete(mailData) then
-        return false
-    end
-    table.insert(self.queue, mailData)
-    return true
-end
-
 function class.TakeAll:SetState(state)
     local oldState = self.state
     self.state = state
@@ -121,4 +113,12 @@ function class.TakeAll:Start()
     else
         self.mailTaker:Remove()
     end
+end
+
+function class.TakeAll:TryQueue(mailData)
+    if not self:CanTake(mailData) and not self:CanDelete(mailData) then
+        return false
+    end
+    table.insert(self.queue, mailData)
+    return true
 end
