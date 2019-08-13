@@ -64,6 +64,14 @@ function class.TakeAll:DelayStart(milliseconds)
     EVENT_MANAGER:RegisterForUpdate(self.name .. "_Start", milliseconds, function() self:Start() end)
 end
 
+function class.TakeAll:DequeueById(mailId)
+    for index, #self.queue do
+        if AreId64sEqual(mailId, self.queue[index].mailId) then
+            return table.remove(self.queue, index)
+        end
+    end
+end
+
 function class.TakeAll:HasQueuedMail()
     return #self.queue > 0
 end

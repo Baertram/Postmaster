@@ -9,6 +9,14 @@ function class.KeyboardModule:New(...)
     return class.SharedModule.New(self, name, MAIL_INBOX_SCENE)
 end
 
+function class.KeyboardModule:GetActiveMailData()
+    local mailId = MAIL_INBOX:GetOpenMailId()
+    if type(mailId) ~= "number" then 
+        return 
+    end
+    return MAIL_INBOX:GetMailData(mailId)
+end
+
 function class.KeyboardModule:GetMailList()
     return ZO_MailInboxList.data, "data"
 end

@@ -34,6 +34,12 @@ function class.SharedModule:CreateSceneOrFragmentStateChangeCallback()
                 self:SetupKeybinds()
             end
             self.keybindWrapper:WrapKeybinds()
+            
+            local mailData = self:GetActiveMailData()
+            if self:GetActiveMailData() then
+                -- Try auto returning mail
+                addon:TryAutoReturnMail()
+            end
         
         -- Inbox hidden
         -- Reset state back to default when inbox hidden, since most server events
@@ -57,7 +63,7 @@ function class.SharedModule:CreateReplyKeybind()
         keybind = "UI_SHORTCUT_TERTIARY",
         callback = function() 
             -- Look up the current mail message in the inbox
-            local mailData = addon.GetOpenMailData()
+            local mailData = self:GetActiveMailData()
             
             -- Make sure it's a non-returned mail from another player
             if not mailData or mailData.fromSystem or mailData.returned then return end
@@ -71,7 +77,7 @@ function class.SharedModule:CreateReplyKeybind()
             if self.takeAll and self.takeAll.state == "active" then
                 return false
             end
-            local mailData = addon.GetOpenMailData()
+            local mailData = self:GetActiveMailData()
             if not mailData then return false end
             return not (mailData.fromCS or mailData.fromSystem)
         end
@@ -91,6 +97,14 @@ function class.SharedModule:CreateCancelReturnKeybind(keybind, originalReturnKey
                 self.takeAll:Cancel()
                 return
             end
+            local mailData = self:GetActiveMailData()
+            EVENT_MANAGER:RegisterForEvent(self.name, EVENT_MAIL_REMOVED,
+                if not AreId64sEqual(mailId, self.mailData.mailId) then
+                    return
+                end
+                
+                EVENT_MANAGER:UnregisterForUpdate(self.name .. "Removed")
+                EVENT_MANAGER:UnregisterForEvent(self.name, EVENT_MAIL_REMOVED)
             originalReturnKeybind.callback()
         end,
         visible = function()
@@ -143,7 +157,7 @@ function class.SharedModule:CreateTakeDeleteKeybind(originalDeleteKeybind)
             then
                 return delete.name
             end
-            local mailData = addon.GetOpenMailData()
+            local mailData = self:GetActiveMailData()
             if addon:QuickTakeCanTake(mailData) then
                 return GetString(SI_LOOT_TAKE)
             else
@@ -151,31 +165,39 @@ function class.SharedModule:CreateTakeDeleteKeybind(originalDeleteKeybind)
             end
         end,
         callback = function()
-            local mailData = addon:GetOpenMailData()
+            local mailData = self:GetActiveMailData()
             local mailIdString = mailData.mailId and zo_getSafeId64Key(mailData.mailId) or ""
+            local mailTaker = class.MailTaker:New(mailData, true)
+            mailTaker:RegisterCallback("Removed", 
+                function()
+                    if self.takeAll then
+                        self.takeAll:DequeueById(mailData.mailId)
+                    end
+                end)
             if delete.visible()
                or (MailR and MailR.IsMailIdSentMail(mailData.mailId))
             then
                 addon.Debug("Deleting mail id " .. mailIdString, debug)
-                delete.callback()
+                mailTaker:Delete()
                 return
             end
             
             addon.Debug("Taking attachments from mail id " .. mailIdString, debug)
-            if addon:QuickTakeCanTake(mailData) then
-                local mailTaker = class.MailTaker:New(mailData, true)
-                mailTaker:Take()
-            else
-                take.callback()
-            end
+            mailTaker.remove = addon:QuickTakeCanTake(mailData)
+            mailTaker:Take()
         end,
         visible = function()
             if self.takeAll and self.takeAll.state == "active" then return false end
             if take.visible() then return true end
-            if MailR and MailR.IsMailIdSentMail(self.GetOpenMailData().mailId) then return true end
+            if MailR and MailR.IsMailIdSentMail(self:GetActiveMailData().mailId) then return true end
             return delete.visible()
         end
     }
+end
+
+
+function class.SharedModule:GetActiveMailData()
+    -- TODO: overload this
 end
 
 function class.SharedModule:GetMailList()

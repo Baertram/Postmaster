@@ -9,6 +9,10 @@ function class.GamepadModule:New(...)
     return class.SharedModule.New(self, name, GAMEPAD_MAIL_INBOX_FRAGMENT)
 end
 
+function class.GamepadModule:GetActiveMailData()
+    return MAIL_MANAGER_GAMEPAD.inbox:GetActiveMailData()
+end
+
 function class.GamepadModule:GetMailList()
     return MAIL_MANAGER_GAMEPAD.inbox.mailList.dataList, "dataSource"
 end
