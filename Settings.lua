@@ -3,7 +3,7 @@
                 SETTINGS
     ===================================
   ]]
-local createChatProxy, refreshPrefix, version6, version7
+local createChatProxy, refreshPrefix, setReasonableLazyWritCrafterDefaults, version6, version7
 
 function Postmaster:SettingsSetup()
 
@@ -66,14 +66,19 @@ function Postmaster:SettingsSetup()
         quickTakeSystemUndaunted = true,
 
         --Baertram - Remember settings variables
-        rememberRecipients = false,
-        rememberSavedRecipients = {},
-        rememberSubjects = false,
-        rememberSavedSubjects = {},
-        rememberBodies = false,
-        rememberSavedBodies = {},
-        rememberBodiesPreviewChars = 75,
-        rememberSavedEntries = 10,
+        sendmailSaveRecipients = false,
+        sendmailRecipients = {},
+        sendmailSaveSubjects = false,
+        sendmailSubjects = {},
+        sendmailSaveMessages = false,
+        sendmailMessages = {},
+        sendmailMessagesPreviewChars = 75,
+        sendmailSavedEntryCount = 10,
+	
+        keybinds = {
+            enable = true,
+            quaternary = "",
+        },
     }
     
     -- Initialize saved variables
@@ -96,10 +101,10 @@ function Postmaster:SettingsSetup()
     refreshPrefix()
 
     --Baertram - Remember local speed up variables
-    local remember = self.Remember
-    local PM_REMEMBER_RECEIVER = remember.PM_REMEMBER_RECEIVER
-    local PM_REMEMBER_SUBJECT = remember.PM_REMEMBER_SUBJECT
-    local PM_REMEMBER_BODY = remember.PM_REMEMBER_BODY
+    local sendmail = self.SendMail
+    local PM_SENDMAIL_RECIPIENT = sendmail.PM_SENDMAIL_RECIPIENT
+    local PM_SENDMAIL_SUBJECT = sendmail.PM_SENDMAIL_SUBJECT
+    local PM_SENDMAIL_MESSAGE = sendmail.PM_SENDMAIL_MESSAGE
     
     local panelData = {
         type = "panel",
@@ -140,6 +145,42 @@ function Postmaster:SettingsSetup()
         },
         
 		
+    --[[ KEYBINDINGS ]]--
+        { type = "submenu", name = GetString(SI_KEYBINDINGS_BINDINGS), controls = {
+        
+        
+        -- Enable Keyind Overrides
+        {
+            type = "checkbox",
+            name = GetString(SI_ADDON_MANAGER_ENABLED),
+            tooltip = GetString(SI_PM_KEYBIND_ENABLE_TOOLTIP),
+            getFunc = function() return self.settings.keybinds.enable end,
+            setFunc =
+                function(value)
+                    self.settings.keybinds.enable = value
+                    self.KeyboardKeybinds:Update()
+                end,
+            width = "full",
+            default = self.defaults.keybinds.enable,
+        },
+        
+        -- Quaternary Action
+        {
+            type = "dropdown",
+            name = GetString(SI_BINDING_NAME_UI_SHORTCUT_QUATERNARY),
+            width = "full",
+            choices = self.quaternaryChoices,
+            choicesValues = self.quaternaryChoicesValues,
+            getFunc = function() return self.settings.keybinds.quaternary end,
+            setFunc =
+                function(value)
+                    self.settings.keybinds.quaternary = value
+                    self.KeyboardKeybinds:Update()
+                end,
+            default = self.defaults.keybinds.quaternary,
+        }
+        
+      }},
 		
 		
 		--[[ TAKE (QUICK) ]]--
@@ -373,7 +414,10 @@ function Postmaster:SettingsSetup()
             type = "checkbox",
             name = GetString(SI_PM_SYSTEM_TAKE_CRAFTING),
             getFunc = function() return self.settings.takeAllSystemHireling end,
-            setFunc = function(value) self.settings.takeAllSystemHireling = value end,
+            setFunc = function(value)
+                    self.settings.takeAllSystemHireling = value
+                    setReasonableLazyWritCrafterDefaults()
+                end,
             width = "full",
             disabled = function() return not self.settings.takeAllSystemAttached end,
             default = self.defaults.takeAllSystemHireling,
@@ -725,75 +769,75 @@ function Postmaster:SettingsSetup()
             },
         },
 
-        --[[ Baertram - Remember settings
+        --[[ Baertram - Send Mail save settings
             only enabled if LibCustomMenu 7.11 or newer is given
         ]]
-        --Remember: Messages
+        -- Send Mail
         {
             type     = "submenu",
-            name     = GetString(SI_PM_REMEMBER_MESSAGE),
+            name     = GetString(SI_SOCIAL_MENU_SEND_MAIL),
             controls = {
                 -- Remember message recipients
                 {
                     type    = "checkbox",
-                    name    = GetString(SI_PM_REMEMBER_MESSAGE_RECIPIENTS),
-                    tooltip = GetString(SI_PM_REMEMBER_MESSAGE_RECIPIENTS_TT),
-                    getFunc = function() return self.settings.rememberRecipients end,
+                    name    = GetString(SI_PM_SENDMAIL_MESSAGE_RECIPIENTS),
+                    tooltip = GetString(SI_PM_SENDMAIL_MESSAGE_RECIPIENTS_TT),
+                    getFunc = function() return self.settings.sendmailSaveRecipients end,
                     setFunc = function(value)
-                        self.settings.rememberRecipients = value
-                        self:RememberCheckAddContextMenu(PM_REMEMBER_RECEIVER)
+                        self.settings.sendmailSaveRecipients = value
+                        self:SendMailCheckAddContextMenu(PM_SENDMAIL_RECIPIENT)
                     end,
-                    default = self.defaults.rememberRecipients,
+                    default = self.defaults.sendmailSaveRecipients,
                     disabled = function() return LibCustomMenu == nil end
                 },
                 -- Remember message subjects
                 {
                     type    = "checkbox",
-                    name    = GetString(SI_PM_REMEMBER_MESSAGE_SUBJECTS),
-                    tooltip = GetString(SI_PM_REMEMBER_MESSAGE_SUBJECTS_TT),
-                    getFunc = function() return self.settings.rememberSubjects end,
+                    name    = GetString(SI_PM_SENDMAIL_MESSAGE_SUBJECTS),
+                    tooltip = GetString(SI_PM_SENDMAIL_MESSAGE_SUBJECTS_TT),
+                    getFunc = function() return self.settings.sendmailSaveSubjects end,
                     setFunc = function(value)
-                        self.settings.rememberSubjects = value
-                        self:RememberCheckAddContextMenu(PM_REMEMBER_SUBJECT)
+                        self.settings.sendmailSaveSubjects = value
+                        self:SendMailCheckAddContextMenu(PM_SENDMAIL_SUBJECT)
                     end,
-                    default = self.defaults.rememberSubjects,
+                    default = self.defaults.sendmailSaveSubjects,
                     disabled = function() return LibCustomMenu == nil end
                 },
                 -- Remember message bodies
                 {
                     type    = "checkbox",
-                    name    = GetString(SI_PM_REMEMBER_MESSAGE_TEXT),
-                    tooltip = GetString(SI_PM_REMEMBER_MESSAGE_TEXT_TT),
-                    getFunc = function() return self.settings.rememberBodies end,
+                    name    = GetString(SI_PM_SENDMAIL_MESSAGE_TEXT),
+                    tooltip = GetString(SI_PM_SENDMAIL_MESSAGE_TEXT_TT),
+                    getFunc = function() return self.settings.sendmailSaveMessages end,
                     setFunc = function(value)
-                        self.settings.rememberBodies = value
-                        self:RememberCheckAddContextMenu(PM_REMEMBER_BODY)
+                        self.settings.sendmailSaveMessages = value
+                        self:SendMailCheckAddContextMenu(PM_SENDMAIL_MESSAGE)
                     end,
-                    default = self.defaults.rememberBodies,
+                    default = self.defaults.sendmailSaveMessages,
                     disabled = function() return LibCustomMenu == nil end
                 },
                 {
                     type = "slider",
-                    name = GetString(SI_PM_REMEMBER_PREVIEW_CHARS),
-                    getFunc = function() return self.settings.rememberBodiesPreviewChars end,
-                    setFunc = function(value) self.settings.rememberBodiesPreviewChars = value end,
+                    name = GetString(SI_PM_SENDMAIL_PREVIEW_CHARS),
+                    getFunc = function() return self.settings.sendmailMessagesPreviewChars end,
+                    setFunc = function(value) self.settings.sendmailMessagesPreviewChars = value end,
                     min = 10,
                     max = 250,
                     width = "full",
-                    disabled = function() return not self.settings.rememberBodies end,
-                    default = self.defaults.rememberBodiesPreviewChars,
+                    disabled = function() return not self.settings.sendmailSaveMessages end,
+                    default = self.defaults.sendmailMessagesPreviewChars,
                 },
                 {
                     type = "slider",
-                    name = GetString(SI_PM_REMEMBER_AMOUNT),
-                    getFunc = function() return self.settings.rememberSavedEntries end,
-                    setFunc = function(value) self.settings.rememberSavedEntries = value end,
+                    name = GetString(SI_PM_SENDMAIL_AMOUNT),
+                    getFunc = function() return self.settings.sendmailSavedEntryCount end,
+                    setFunc = function(value) self.settings.sendmailSavedEntryCount = value end,
                     min = 1,
                     max = 20,
                     width = "full",
                     clampInput = false,
-                    disabled = function() return not self.settings.rememberRecipients and not self.settings.rememberSubjects and not self.settings.rememberBodies end,
-                    default = self.defaults.rememberSavedEntries,
+                    disabled = function() return not self.settings.sendmailSaveRecipients and not self.settings.sendmailSaveSubjects and not self.settings.sendmailSaveMessages end,
+                    default = self.defaults.sendmailSavedEntryCount,
                 },
             } -- controls
         },--submenu
@@ -842,15 +886,16 @@ function Postmaster:SettingsSetup()
                     end
                 end
         }
-
     }
         
     LibAddonMenu2:RegisterOptionControls(Postmaster.name .. "Options", optionsTable)
     
     self.summary = self.classes.GroupedAccountSummary:New(self.templateSummary)
     
-    SLASH_COMMANDS["/postmaster"] = self.OpenSettingsPanel
-    SLASH_COMMANDS["/pm"] = self.OpenSettingsPanel
+    SLASH_COMMANDS["/postmaster"] = self.Utility.OpenSettingsPanel
+    SLASH_COMMANDS["/pm"] = self.Utility.OpenSettingsPanel
+    
+    setReasonableLazyWritCrafterDefaults()
 end
 
 ----------------------------------------------------------------------------
@@ -877,6 +922,21 @@ function refreshPrefix()
     self.suffix = self.settings.chatUseSystemColor and "" or "|r"
     self.templateSummary:SetPrefix(self.prefix)
     self.templateSummary:SetSuffix(self.suffix)
+end
+
+function setReasonableLazyWritCrafterDefaults()
+    local self = Postmaster
+    if not WritCreater or not self.settings.takeAllSystemHireling then
+        return
+    end
+    -- If Postmaster is configured to harvest hireling mails with Take All,
+    -- disable the auto-loot and delete settings for hireling mails in Lazy Writ Crafter
+    local lazyWritCrafterSettings = WritCreater:GetSettings()
+    if not lazyWritCrafterSettings.mail then
+        lazyWritCrafterSettings.mail = {}
+    end
+    lazyWritCrafterSettings.mail.loot = false
+    lazyWritCrafterSettings.mail.delete = false
 end
 
 function version6(sv)
