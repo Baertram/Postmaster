@@ -6,6 +6,7 @@
   
 local addon = Postmaster
 local debug = false
+local PM_DIALOG = "Postmaster.Dialog"
 
 -- STATIC CLASS
 addon.Utility = ZO_Object:Subclass()
@@ -14,22 +15,23 @@ addon.Utility = ZO_Object:Subclass()
 --[[ True if the given mail can be taken according to the given settings ]]
 function addon.Utility.CanTake(mailData, settings)
     
-    if not mailData or not mailData.mailId or type(mailData.mailId) ~= "number" then 
+    if not mailData or not mailData.mailId or type(mailData.mailId) ~= "number" then
+        addon.Utility.Debug("Utility.CanTake(" .. tostring(mailData and mailData.mailId) 
+            .. ") returning false due to a bad mailId", debug)
         return false 
     end
     
     local mailIdString = addon.Utility.GetMailIdString(mailData.mailId)
     if addon.mailIdsFailedDeletion[mailIdString] == true then
+        addon.Utility.Debug("Utility.CanTake(" .. tostring(mailData and mailData.mailId) 
+            .. ") returning false because it previously failed deletion.", debug)
         return false
     end
     
-    -- Item was meant to be deleted, but the inbox closed, so include it in 
-    -- the take all list
-    if addon.Delete:IsPending(mailData.mailId) then
-        return true
+    local hasAttachments = addon.Utility.HasAttachments(mailData)
     
     -- Handle C.O.D. mail
-    elseif mailData.codAmount and mailData.codAmount > 0 then
+    if mailData.codAmount and mailData.codAmount > 0 then
     
         -- Skip C.O.D. mails, if so configured
         if not settings.codTake then return false
@@ -44,7 +46,6 @@ function addon.Utility.CanTake(mailData, settings)
     end
     
     local fromSystem = (mailData.fromCS or mailData.fromSystem)
-    local hasAttachments = (mailData.attachedMoney and mailData.attachedMoney > 0) or (mailData.numAttachments and mailData.numAttachments > 0)
     if hasAttachments then
         
         -- Special handling for hireling mail, since we know even without opening it that
@@ -62,6 +63,8 @@ function addon.Utility.CanTake(mailData, settings)
            and (freeSlots - mailData.numAttachments) < (settings.reservedSlots or 0)
            and not attachmentsToCraftBag
         then 
+            addon.Utility.Debug("Utility.CanTake(" .. tostring(mailData and mailData.mailId) 
+                .. ") returning false there are not enough slots in the backpack.", debug)
             return false 
         end
         
@@ -139,6 +142,41 @@ function addon.Utility.Debug(input, force)
     d("[PM-DEBUG] " .. input)
 end
 
+function addon.Utility.GamepadGetSelectedMailData()
+    return MAIL_MANAGER_GAMEPAD.inbox:GetActiveMailData()
+end
+
+function addon.Utility.GamepadIsInboxShown()
+    return SCENE_MANAGER:IsShowing("mailManagerGamepad") and MAIL_MANAGER_GAMEPAD.activeFragment == GAMEPAD_MAIL_INBOX_FRAGMENT
+end
+
+function addon.Utility.GetActiveKeybinds()
+    local keybindScope = IsInGamepadPreferredMode() and "gamepad" or "keyboard"
+    return addon.keybinds[keybindScope]
+end
+
+function addon.Utility.GetAttachmentData(mailId)
+  
+    if not IsReadMailInfoReady(mailId) then
+        return
+    end
+  
+    local numAttachments, attachedMoney, codAmount = GetMailAttachmentInfo(mailId)
+    local attachmentData = { items = {}, money = attachedMoney, cod = codAmount, numAttachments = numAttachments, uniqueItemConflictCount = 0 }
+    for attachIndex = 1, numAttachments do
+        local itemLink = GetAttachedItemLink(mailId, attachIndex)
+        if addon.UniqueBackpackItemsList:ContainsItemLink(itemLink) then
+            attachmentData.uniqueItemConflictCount = attachmentData.uniqueItemConflictCount + 1
+        else
+            local _, stack = GetAttachedItemInfo(mailId, attachIndex)
+            local attachmentItem = { link = itemLink, count = stack or 1 }
+            table.insert(attachmentData.items, attachmentItem)
+        end
+    end
+    
+    return attachmentData
+end
+
 --[[ Searches addon.codMails for the first mail id and C.O.D. mail data taht
      match the given expected amount. ]]
 function addon.Utility.GetCodMailByGoldChangeAmount(goldChanged)
@@ -179,6 +217,14 @@ function addon.Utility.GetMailData()
     return data, index
 end
 
+function addon.Utility.GetMailDataById(mailId)
+    if IsInGamepadPreferredMode() then
+        return MAIL_MANAGER_GAMEPAD.inbox.mailDataById[zo_getSafeId64Key(mailId)]
+    else
+        return MAIL_INBOX:GetMailData(mailId)
+    end
+end
+
 --[[ Returns a safe string representation of the given mail ID. Useful as an 
      associative array key for lookups. ]]
 function addon.Utility.GetMailIdString(mailId)
@@ -189,6 +235,34 @@ function addon.Utility.GetMailIdString(mailId)
         return zo_getSafeId64Key(mailId) 
     else return 
         tostring(mailId) 
+    end
+end
+
+
+function addon.Utility.GetMessageDialog()
+    if(not ESO_Dialogs[PM_DIALOG]) then
+        ESO_Dialogs[PM_DIALOG] = {
+            canQueue = true,
+            title = { text = "" },
+            mainText = { text = "" },
+            buttons = {{ text = SI_OK }}
+        }
+    end
+    return ESO_Dialogs[PM_DIALOG]
+end
+
+function addon.Utility.HasAttachments(mailData)
+    if not mailData then
+        return false
+    end
+    return (mailData.attachedMoney and mailData.attachedMoney > 0) or (mailData.numAttachments and mailData.numAttachments > 0)
+end
+
+function addon.Utility.IsInboxShown()
+    if IsInGamepadPreferredMode() then
+        return addon.Utility.GamepadIsInboxShown()
+    else
+        return addon.Utility.KeyboardIsInboxShown()
     end
 end
 
@@ -217,6 +291,39 @@ function addon.Utility.KeyboardGetSelectedMailData()
     local selectedNode = MAIL_INBOX.navigationTree:GetSelectedNode()
     local selectedMailData = selectedNode and selectedNode.data
     return selectedMailData
+end
+
+function addon.Utility.KeyboardInboxTreeEvalAllNodes(eval, node)
+  
+    if not node then
+        node = MAIL_INBOX.navigationTree.rootNode
+    end
+    
+    if node.children then
+        for _, child in ipairs(node.children) do
+            addon.Utility.KeyboardInboxTreeEvalAllNodes(eval, child)
+        end
+    elseif node.templateInfo.template == "ZO_MailInboxRow" then
+        eval(node)
+    end
+end
+
+function addon.Utility.KeyboardIsInboxShown()
+    return SCENE_MANAGER:IsShowing("mailInbox")
+end
+
+--[[ Returns true if the given mail id has been opened and we know it 
+     contains attachments, no money, and all attachments conflict with 
+     unique items in the backpack ]]--
+function addon.Utility.MailContainsOnlyUniqueConflictAttachments(mailId)
+    local attachmentData = addon.Utility.GetAttachmentData(mailId)
+    if attachmentData
+       and (not attachmentData.money or attachmentData.money == 0)
+       and attachmentData.numAttachments > 0
+       and attachmentData.uniqueItemConflictCount == attachmentData.numAttachments
+    then
+        return true
+    end
 end
 
 --[[ Checks the given field of a mail message for a given list of
@@ -248,6 +355,12 @@ function addon.Utility.MailFieldMatch(mailData, field, substrings)
     end
 end
 
+function addon.Utility.MatchMailIdClosure(mailId)
+    return function(mailData)
+        return mailData and mailData.mailId and AreId64sEqual(mailData.mailId, mailId)
+    end
+end
+
 --[[ Opens the addon settings panel ]]
 function addon.Utility.OpenSettingsPanel()
     LibAddonMenu2:OpenToPanel(addon.settingsPanel)
@@ -258,6 +371,21 @@ function addon.Utility.Print(input)
     local self = Postmaster
     local output = addon.prefix .. input .. addon.suffix
     addon.chat:Print(output)
+end
+
+function addon.Utility.RefreshMailList()
+    if IsInGamepadPreferredMode() then
+        MAIL_MANAGER_GAMEPAD.inbox:RefreshMailList()
+    else
+        MAIL_INBOX:RefreshData()
+    end
+end
+
+function addon.Utility.ShowMessageDialog(title, message)
+    local dialog = addon.Utility.GetMessageDialog()
+    dialog.title.text = title
+    dialog.mainText.text = message
+    ZO_Dialogs_ShowDialog(PM_DIALOG)
 end
 
 --[[ Checks the given string for a given list of
@@ -307,5 +435,25 @@ function addon.Utility.StringMatchFirstPrefix(s, prefixes)
                 end
             end
         end
+    end
+end
+
+function addon.Utility.StringRemovePrefixes(s, prefixes)
+    for i=1, #prefixes do
+        local prefix = zo_strlower(prefixes[i])
+        if s == prefix then
+            return ""
+        else
+            s = string.gsub(s, "^" .. zo_strlower(prefix) .. " ", "")
+        end
+    end
+    return s
+end
+
+function addon.Utility.UpdateKeybindButtonGroup()
+    if IsInGamepadPreferredMode() then
+        KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_MANAGER_GAMEPAD.inbox.mainKeybindDescriptor)
+    else
+        KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_INBOX.selectionKeybindStripDescriptor)
     end
 end

@@ -6,6 +6,7 @@
   
 local addon = Postmaster
 local debug = false
+local exitMailNodeControl
 
 -- Singleton class
 local Events = ZO_Object:Subclass()
@@ -15,8 +16,6 @@ function Events:New()
 end
 
 function Events:Initialize()
-    
-    self.inboxUpdated = false
   
     self.handlerNames = {
         [EVENT_INVENTORY_IS_FULL]                = "InventoryIsFull",
@@ -28,7 +27,6 @@ function Events:Initialize()
         [EVENT_MAIL_TAKE_ATTACHED_ITEM_SUCCESS]  = "MailTakeAttachedItemSuccess",
         [EVENT_MAIL_TAKE_ATTACHED_MONEY_SUCCESS] = "MailTakeAttachedMoneySuccess",
         [EVENT_MONEY_UPDATE]                     = "MoneyUpdate",
-        [EVENT_PLAYER_ACTIVATED]                 = "PlayerActivated",
     }
     
     -- Special keys where RegisterForUpdate() and UnregisterForUpdate() should share the same 
@@ -42,7 +40,7 @@ function Events:Initialize()
     self.updateKeyPrefix = addon.name .. ".Events."
     
     for event, handlerName in pairs(self.handlerNames) do
-        EVENT_MANAGER:RegisterForEvent(addon.name, event, self:CreateHandler(event, handlerName))
+        EVENT_MANAGER:RegisterForEvent(addon.name, event, self:Closure(handlerName))
     end
     
     -- We are only interested in backpack inventory updates
@@ -54,14 +52,10 @@ function Events:Initialize()
     end
 end
 
-function Events:CreateHandler(eventCode, handlerName)
+function Events:Closure(functionName)
     return function(...)
-        self[handlerName](self, ...)
+        self[functionName](self, ...)
     end
-end
-
-function Events:IsInboxUpdated()
-    return self.inboxUpdated
 end
 
 --[[ Raised when an attempted item transfer to the backpack fails due to not 
@@ -70,9 +64,8 @@ end
 function Events:InventoryIsFull(eventCode, numSlotsRequested, numSlotsFree)
 
     addon.Utility.Debug("EVENT_INVENTORY_IS_FULL(" .. tostring(eventCode) .. ", "..tostring(numSlotsRequested) .. "," .. tostring(numSlotsFree) .. ")", debug)
-    if IsInGamepadPreferredMode() then return end
     addon:Reset()
-    KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_INBOX.selectionKeybindStripDescriptor)
+    addon.Utility.UpdateKeybindButtonGroup()
 end
 
 --[[ Raised when a backpack inventory slot is updated. ]]
@@ -91,8 +84,24 @@ function Events:MailInboxUpdate(eventCode)
     addon.Utility.Debug("EVENT_MAIL_INBOX_UPDATE(" .. tostring(eventCode) .. ")", debug)
     if not addon.settings.bounce then return end
     
-    addon.Utility.Debug("Setting addon.Events.inboxUpdated to true", debug)
-    self.inboxUpdated = true
+    -- DeleteQueued will not run until the mailbox is updated the first time.
+    -- Unlock it now.
+    addon.Utility.Debug("Unlocking Delete:DeleteQueued().", debug)
+    addon.Delete:Unlock()
+    
+    -- Auto return only runs a single time every time the inbox updates.
+    -- Unlock it now.  It will automatically re-lock itself after it runs, until
+    -- the next time the inbox updates.
+    addon.Utility.Debug("Unlocking AutoReturn:QueueAndReturn().", debug)
+    addon.AutoReturn:Unlock()
+    
+    -- Try deleting any messages queued for deletion
+    if addon.Delete:DeleteQueued() then
+        return
+    end
+    
+    -- Try auto-returning any new mail that's arrived
+    addon.AutoReturn:QueueAndReturn()
 end
 
 --[[ Raised in response to a successful RequestReadMail() call. Indicates that
@@ -103,21 +112,12 @@ end
 function Events:MailReadable(eventCode, mailId)
 
     addon.Utility.Debug("EVENT_MAIL_READABLE(" .. tostring(eventCode) .. "," .. tostring(mailId) .. ")", debug)
-    if IsInGamepadPreferredMode() then return end
     self:UnregisterForUpdate(EVENT_MAIL_READABLE)
         
     -- If taking all, then go ahead and start the next Take loop, since the
     -- mail and attachments are readable now.
-    if addon.takingAll then 
-        addon.keybinds.TakeAll:TakeOrDeleteSelected()
-        
-    -- If a mail is selected that was previously marked for deletion but never
-    -- finished, automatically delete it.
-    elseif not addon.Delete:ByMailIdIfPending(MAIL_INBOX.mailId) then
-    
-        -- Otherwise, try auto-returning any new mail that's arrived
-        addon.AutoReturn:Run()
-    
+    if addon.takingAll then
+        addon.Utility.GetActiveKeybinds().TakeAll:DequeueReadRequest(mailId)
     end
 end
 
@@ -128,17 +128,32 @@ function Events:MailRemoved(eventCode, mailId)
 
     addon.Utility.Debug("EVENT_MAIL_REMOVED(" .. tostring(eventCode) .. "," .. tostring(mailId) .. ")", debug)
     
-    if not addon.taking then return end
+    -- If a mail id was queued for deletion, dequeue it
+    local deleteQueuedRunning = addon.Delete:IsRunning()
+    local deleteWasQueued = addon.Delete:DequeueMailId(mailId)
+    if deleteWasQueued and deleteQueuedRunning then
+        -- If addon.Delete is running through a DeleteQueued() operation, then
+        -- proceed to the next in the queue.
+        addon.Delete:DeleteNext()
+        return
+    end
     
-    -- If the mail id was pending deletion, it isn't anymore
-    addon.Delete:ClearPending(mailId)
+    -- If a mail id was queued for return, dequeue it
+    local autoReturnQueueRunning = addon.AutoReturn:IsRunning()
+    if addon.AutoReturn:DequeueMailId(mailId) and autoReturnQueueRunning then
+        -- If addon.AutoReturn is running through a QueueAndDelete() operation, then
+        -- proceed to the next in the queue.
+        addon.AutoReturn:ReturnNext()
+        return
+    end
     
-    if IsInGamepadPreferredMode() then return end
+    -- Just a quick sanity check.  If a mail was removed while an auto-return or auto-delete queue was running,
+    -- possibly by another addon, stop processing.
+    if autoReturnQueueRunning or deleteQueuedRunning then
+        return
+    end
     
-    -- In the middle of auto-return
-    if addon.AutoReturn:IsRunning() then return end
-    
-    if eventCode then
+    if eventCode == EVENT_MAIL_REMOVED then
         
         -- Unwire timeout callback
         self:UnregisterForUpdate(EVENT_MAIL_REMOVED)
@@ -146,14 +161,66 @@ function Events:MailRemoved(eventCode, mailId)
         addon.Utility.Debug("deleted mail id "..tostring(mailId))
     end
     
-    local isInboxOpen = SCENE_MANAGER:IsShowing("mailInbox")
+    -- Everything below this point relates to Take, Take All and Take All by Subject/Author operations
+    if not addon.taking then
+        return
+    end
+    
+    local isInboxOpen = addon.Utility.IsInboxShown()
+    
+    local isNotDone = false
     
     -- For non-canceled take all requests, select the next mail for taking.
     -- It will be taken automatically by Event_MailReadable() once the 
     -- EVENT_MAIL_READABLE event comes back from the server.
-    if isInboxOpen and addon.takingAll then
+    if isInboxOpen and addon.takingAll and not deleteQueuedRunning then
         addon.Utility.Debug("Selecting next mail with attachments", debug)
-        if addon.keybinds.TakeAll:SelectNext() then return end
+        isNotDone = addon.Utility.GetActiveKeybinds().TakeAll:SelectNext(mailId, nil, eventCode)
+    end
+    
+    if isInboxOpen and deleteWasQueued and eventCode == EVENT_MAIL_REMOVED and not IsInGamepadPreferredMode() then
+        
+        -- Call the keyboard/mouse mail removed handler that was deferred earlier in Prehooks.lua.
+        -- The following will end the active mail read, refresh the mail list and select 
+        -- any mail ids that were deferred above.
+        MAIL_INBOX:OnMailRemoved(mailId)
+        
+        -- Clear out any stuck mouseovers
+        addon.Utility.KeyboardInboxTreeEvalAllNodes(exitMailNodeControl)
+    end
+    
+    -- Everything below this point is for when the take all operation is done.
+    if isNotDone then
+        return
+    end
+    
+    -- Ensure that a keyboard mail is selected after a take all operation.
+    -- The selection was potentially cleared to avoid progressing to the second mail after the final
+    -- MAIL_INBOX:RefreshData()
+    if not IsInGamepadPreferredMode() then
+        
+        local inboxMailId = MAIL_INBOX:GetOpenMailId()
+        local selectNode
+        
+        -- Prefer the node already displaying
+        if inboxMailId then
+            selectNode = MAIL_INBOX.navigationTree:GetTreeNodeByData({ mailId = inboxMailId })
+            if selectNode then
+                MAIL_INBOX.navigationTree:Commit(selectNode, true)
+            end
+        end
+        
+        -- Otherwise, select the first node in the tree
+        if not selectNode then
+            MAIL_INBOX.navigationTree:SelectAnything()
+        end
+        
+        -- Not sure how this could happen, but if the inbox has no mail nodes, but it
+        -- is still tracking an open mail id, then close out the tracking data.
+        local selectedNode = MAIL_INBOX.navigationTree:GetSelectedNode()
+        if inboxMailId and not selectedNode or not selectedNode.data or not selectedNode.data.mailId then
+            MAIL_INBOX:EndRead()
+        end
     end
     
     -- This was either a normal take, or there are no more valid mails
@@ -163,24 +230,13 @@ function Events:MailRemoved(eventCode, mailId)
     -- If the inbox is still open when the delete comes through, refresh the
     -- keybind strip.
     if isInboxOpen then
-        KEYBIND_STRIP:UpdateKeybindButtonGroup(MAIL_INBOX.selectionKeybindStripDescriptor)
-        
-    -- If the inbox was closed when the actual delete came through from the
-    -- server, it leaves the inbox list in an inconsistent (dirty) state.
-    else
-        addon.Utility.Debug("Setting inbox mail id to nil", debug)
-        MAIL_INBOX.mailId = nil
-        
-        -- if the inbox is open, try auto returning mail now
-        addon.AutoReturn:Run()
+        addon.Utility.UpdateKeybindButtonGroup()
     end
 end
 
 --[[ Raised after a sent mail message is received by the server. We only care
      about this event because C.O.D. mail cannot be deleted until it is raised. ]]
-function Events:MailSendSuccess(eventCode) 
-    if IsInGamepadPreferredMode() then return end
-
+function Events:MailSendSuccess(eventCode)
     if not addon.taking then return end
     addon.Utility.Debug("Event_MailSendSuccess()", debug)
     local mailIdString,codMail = addon.Utility.GetFirstCompleteCodMail()
@@ -193,8 +249,6 @@ end
 --[[ Raised when attached items are all received into inventory from a mail.
      Used to automatically trigger mail deletion. ]]
 function Events:MailTakeAttachedItemSuccess(eventCode, mailId)
-    if IsInGamepadPreferredMode() then return end
-
     if not addon.taking then return end
     addon.Utility.Debug("attached items taken "..tostring(mailId))
     local waitingForMoney
@@ -214,8 +268,6 @@ end
 --[[ Raised when attached gold is all received into inventory from a mail.
      Used to automatically trigger mail deletion. ]]
 function Events:MailTakeAttachedMoneySuccess(eventCode, mailId)
-    if IsInGamepadPreferredMode() then return end
-
     if not addon.taking then return end
     addon.Utility.Debug("attached money taken "..tostring(mailId), debug)
     local waitingForItems
@@ -236,7 +288,6 @@ end
      about money leaving inventory due to a mail event, indicating a C.O.D. payment.
      Used to automatically trigger mail deletion. ]]
 function Events:MoneyUpdate(eventCode, newMoney, oldMoney, reason)
-    if IsInGamepadPreferredMode() then return end
 
     if not addon.taking then return end
     
@@ -277,19 +328,9 @@ function Events:MoneyUpdate(eventCode, newMoney, oldMoney, reason)
     end
 end
 
---[[ Raised after the player first logs in, or ReloadUI is called.
-     Initialize the unique items manager, which tracks all unique items in the backpack. ]]--
-function Events:PlayerActivated(eventCode, isInitial)
-    addon.UniqueBackpackItemsList = addon.classes.UniqueBagItemsList:New(BAG_BACKPACK)
-end
-
 function Events:RegisterForUpdate(eventCode, timeout, callback)
     local updateKey = self.updateKeys[eventCode] or self.handlerNames[eventCode]
     EVENT_MANAGER:RegisterForUpdate(addon.name .. ".Events." .. updateKey, timeout, callback)
-end
-
-function Events:SetInboxUpdated(inboxUpdated)
-    self.inboxUpdated = inboxUpdated
 end
 
 function Events:UnregisterAllForUpdate(eventCode)
@@ -306,6 +347,10 @@ end
 function Events:UnregisterForUpdate(eventCode)
     local updateKey = self.updateKeys[eventCode] or self.handlerNames[eventCode]
     EVENT_MANAGER:UnregisterForUpdate(self.updateKeyPrefix .. updateKey)
+end
+
+function exitMailNodeControl(node)
+    ZO_MailInboxRow_OnMouseExit(node:GetControl())
 end
 
 addon.Events = Events:New()

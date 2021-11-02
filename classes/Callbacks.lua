@@ -16,32 +16,47 @@ end
   
 --[[ Wire up all callback handlers ]]
 function Callbacks:Initialize()
-    MAIL_INBOX_SCENE:RegisterCallback("StateChange", self:CreateCallback("MailInboxStateChange"))
+    CALLBACK_MANAGER:RegisterCallback("BackpackFullUpdate", self:CreateCallback(self.BackpackFullUpdate))
+    local stateChangeCallback = self:CreateCallback(self.MailInboxStateChange)
+    MAIL_INBOX_SCENE:RegisterCallback("StateChange", stateChangeCallback)
+    GAMEPAD_MAIL_INBOX_FRAGMENT:RegisterCallback("StateChange", stateChangeCallback)
 end
 
-function Callbacks:CreateCallback(callbackName)
+--[[ Raised whenever the backpack inventory is populated. ]]
+function Callbacks:BackpackFullUpdate()
+    -- Initialize or refresh the unique items manager, which tracks all unique items in the backpack.
+    if addon.UniqueBackpackItemsList then
+        addon.UniqueBackpackItemsList:ScanBag()
+    else
+        addon.UniqueBackpackItemsList = addon.classes.UniqueBagItemsList:New(BAG_BACKPACK)
+    end
+end
+
+function Callbacks:CreateCallback(callback)
     return function(...)
-        self[callbackName](self, ...)
+        callback(self, ...)
     end
 end
 
 --[[ Raised whenever the inbox is shown or hidden. ]]
 function Callbacks:MailInboxStateChange(oldState, newState)
-    if IsInGamepadPreferredMode() then return end
+    
+    addon.Utility.Debug("Callbacks:MailInboxStateChange(" .. tostring(oldState) .. ", " .. tostring(newState) .. ")", debug)
     
     -- Inbox shown
     if newState == SCENE_SHOWN then
-        -- Request mail from the server that was originally requested while
-        -- the inbox was closed
-        if(MAIL_INBOX.requestMailId) then
-            MAIL_INBOX:RequestReadMessage(MAIL_INBOX.requestMailId)
-            MAIL_INBOX.requestMailId = nil
+        
+        addon.Prehooks:InboxRefreshAttachmentsHeaderShown(MAIL_INBOX)
+      
+        -- Delete any mail that was requested to be deleted, but failed because the inbox hid before.
+        -- Note, if this is true, AutoReturn:QueueAndReturn() will be run after it finishes.
+        if addon.Delete:DeleteQueued() then
+            return
         end
-        -- If a mail is selected that was previously marked for deletion but never
-        -- finished, automatically delete it.
-        if not addon.Delete:ByMailIdIfPending(MAIL_INBOX.mailId) then
-            -- If not deleting mail, then try auto returning mail
-            addon.AutoReturn:Run()
+        
+        -- If not deleting mail, then try auto returning mail
+        if addon.AutoReturn:QueueAndReturn() then
+            return
         end
     
     -- Inbox hidden
